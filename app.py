@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import logging
 import os
 import subprocess
@@ -166,6 +167,7 @@ def _generate_and_store_result(
         "result": result,
         "hypotheses": hypotheses,
         "document_count": len(documents),
+        "source_types": _source_type_counts(documents),
         "chunk_count": len(chunks),
         "yandex_summary": yandex_summary,
         "yandex_error": yandex_error,
@@ -180,6 +182,7 @@ def _render_saved_result(saved: dict) -> None:
         f"Сформировано гипотез: {len(hypotheses)}. "
         f"Источников: {saved['document_count']}. Фрагментов: {saved['chunk_count']}."
     )
+    _render_source_types(saved.get("source_types", {}))
     _render_yandex_summary(saved.get("yandex_summary"), saved.get("yandex_error"))
     _render_agent_trace(result)
     _render_graph_context(result)
@@ -192,6 +195,25 @@ def _render_saved_result(saved: dict) -> None:
 def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
     total = sum(weights.values()) or 1.0
     return {key: value / total for key, value in weights.items()}
+
+
+def _source_type_counts(documents) -> dict[str, int]:
+    counts = Counter()
+    for document in documents:
+        extension = document.metadata.get("extension", "unknown")
+        counts[str(extension).lower().lstrip(".") or "unknown"] += 1
+    return dict(sorted(counts.items()))
+
+
+def _render_source_types(source_types: dict[str, int]) -> None:
+    if not source_types:
+        return
+    image_count = sum(source_types.get(ext, 0) for ext in ["png", "jpg", "jpeg", "webp"])
+    summary = ", ".join(f"{ext}: {count}" for ext, count in source_types.items())
+    if image_count:
+        st.caption(f"Типы источников: {summary}. Изображений использовано: {image_count}.")
+    else:
+        st.caption(f"Типы источников: {summary}.")
 
 
 def _render_requirements_match() -> None:
