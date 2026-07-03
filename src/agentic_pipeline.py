@@ -108,7 +108,7 @@ def _enrich_hypothesis(
     ]
     confidence = min(1.0, hypothesis.confidence + 0.04 * len(graph_evidence))
     total_score = min(1.0, hypothesis.total_score + 0.02 * len(calculations))
-    return replace(
+    enriched = replace(
         hypothesis,
         rationale=rationale,
         evidence=evidence,
@@ -116,8 +116,9 @@ def _enrich_hypothesis(
         resources=resources,
         confidence=round(confidence, 3),
         total_score=round(total_score, 3),
-        calculations=calculations,
     )
+    object.__setattr__(enriched, "calculations", calculations)
+    return enriched
 
 
 def _build_long_context(

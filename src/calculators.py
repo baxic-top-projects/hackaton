@@ -1,6 +1,17 @@
 from __future__ import annotations
 
-from .models import CalculationResult, Hypothesis, ResearchBrief
+from dataclasses import dataclass, field
+
+from .models import Hypothesis, ResearchBrief
+
+
+@dataclass(frozen=True)
+class CalculationResult:
+    name: str
+    status: str
+    value: str
+    rationale: str
+    assumptions: list[str] = field(default_factory=list)
 
 
 RELATIVE_ELEMENT_COST = {
