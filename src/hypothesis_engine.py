@@ -17,6 +17,11 @@ ADDITIVES = {
     "хром": "повышения коррозионной и окалиностойкости",
     "никель": "стабилизации аустенитной матрицы и повышения пластичности",
     "кобальт": "повышения жаропрочности матрицы",
+    "доизмельчение": "раскрытия закрытых сростков Pnt/Cp и снижения потерь в крупных классах",
+    "реагентный режим": "изменения селективности флотации и закрепления коллектора на целевых минералах",
+    "pH": "управления поверхностным зарядом минералов и селективностью флотации",
+    "классификация": "разделения материала по крупности перед повторной флотацией",
+    "обесшламливание": "снижения влияния тонких шламов на селективность извлечения",
 }
 
 PROCESSES = {
@@ -28,6 +33,10 @@ PROCESSES = {
     "обжиг": "изменения фазового состава и раскрытия минералов",
     "выщелачивание": "перевода целевого компонента в раствор",
     "магнитная сепарация": "разделения фаз по магнитной восприимчивости",
+    "перечистка": "повторного выделения ценных минералов из хвостовых потоков",
+    "доизмельчение": "раскрытия сростков перед повторным обогащением",
+    "классификация": "выделения классов крупности с повышенными потерями Ni/Cu",
+    "обесшламливание": "удаления тонких фракций, ухудшающих флотационную селективность",
 }
 
 PROPERTIES = {
@@ -36,6 +45,9 @@ PROPERTIES = {
     "твердость": "сопротивление пластической деформации",
     "пластичность": "деформационная способность без разрушения",
     "извлечение": "доля целевого металла в концентрате",
+    "потери": "масса Ni/Cu, уходящая в хвосты",
+    "селективность": "разделение целевых минералов и пустой породы",
+    "крупность": "распределение потерь по классам частиц",
     "себестоимость": "стоимость сырья и операций",
     "коррозионная стойкость": "устойчивость к агрессивной среде",
 }
@@ -47,6 +59,10 @@ RISK_HINTS = {
     "флотация": "чувствительность к pH, реагентному режиму и тонкости помола",
     "выщелачивание": "требования к безопасности реагентов и очистке растворов",
     "старение": "риск переcтаривания и потери пластичности",
+    "доизмельчение": "рост энергозатрат и риск переизмельчения раскрытых минералов",
+    "реагентный режим": "риск ухудшения селективности и роста расхода реагентов",
+    "pH": "необходим контроль водно-химического режима и устойчивости пульпы",
+    "обесшламливание": "риск потери части тонких ценных минералов вместе со шламами",
 }
 
 
@@ -66,13 +82,17 @@ def generate_hypotheses(
     seed_evidence = index.search(query, limit=10)
     corpus = " ".join(e.quote.lower() for e in seed_evidence) + " " + query.lower()
 
-    additives = _rank_terms(corpus, ADDITIVES, fallback=["ниобий", "молибден", "титан"])
-    processes = _rank_terms(corpus, PROCESSES, fallback=["отжиг", "старение", "флотация"])
-    properties = _rank_terms(corpus, PROPERTIES, fallback=[_target_property(brief.target)])
+    is_tailings_case = _is_tailings_case(brief)
+    additives = _rank_terms(corpus, ADDITIVES, fallback=_fallback_factors(brief))
+    processes = _rank_terms(corpus, PROCESSES, fallback=_fallback_processes(brief))
+    properties = _rank_terms(corpus, PROPERTIES, fallback=_fallback_properties(brief))
+    if is_tailings_case:
+        allowed = {"извлечение", "потери", "селективность", "крупность", "себестоимость"}
+        properties = [prop for prop in properties if prop in allowed] or _fallback_properties(brief)
 
     candidates: list[Hypothesis] = []
     for additive, process, prop in itertools.islice(
-        itertools.product(additives, processes, properties),
+        ((a, p, prop) for a, p, prop in itertools.product(additives, processes, properties) if a != p),
         max(limit * 3, 12),
     ):
         hypothesis_query = f"{brief.target} {additive} {process} {prop} {brief.constraints}"
@@ -123,6 +143,29 @@ def _target_property(target: str) -> str:
         if prop in target_lower:
             return prop
     return "прочность"
+
+
+def _is_tailings_case(brief: ResearchBrief) -> bool:
+    text = " ".join([brief.target, brief.constraints, brief.available_materials, brief.equipment]).lower()
+    return any(word in text for word in ["хвост", "флотац", "извлеч", "cu", "мед"])
+
+
+def _fallback_factors(brief: ResearchBrief) -> list[str]:
+    if _is_tailings_case(brief):
+        return ["доизмельчение", "реагентный режим", "pH", "классификация"]
+    return ["ниобий", "молибден", "титан"]
+
+
+def _fallback_processes(brief: ResearchBrief) -> list[str]:
+    if _is_tailings_case(brief):
+        return ["флотация", "классификация", "доизмельчение", "обесшламливание"]
+    return ["отжиг", "старение", "флотация"]
+
+
+def _fallback_properties(brief: ResearchBrief) -> list[str]:
+    if _is_tailings_case(brief):
+        return ["извлечение", "потери", "селективность"]
+    return [_target_property(brief.target)]
 
 
 def _mechanism(additive: str, process: str) -> str:
