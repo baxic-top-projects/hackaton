@@ -33,6 +33,8 @@ def _role_for_token(token: str | None, token_map: str | None, legacy_token: str 
             secret, _, role = item.partition(":")
             if token and token == secret.strip():
                 return (role or legacy_role).strip()
+        if legacy_token:
+            return legacy_role if token == legacy_token else None
         return None
     if legacy_token:
         return legacy_role if token == legacy_token else None
