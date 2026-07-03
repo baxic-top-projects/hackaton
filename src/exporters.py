@@ -22,6 +22,9 @@ def hypotheses_to_frame(hypotheses: list[Hypothesis]) -> pd.DataFrame:
                 "risk": hypothesis.risk,
                 "confidence": hypothesis.confidence,
                 "sources": ", ".join(sorted({item.source for item in hypothesis.evidence})),
+                "calculators": "; ".join(
+                    f"{item.name}: {item.status} ({item.value})" for item in hypothesis.calculations
+                ),
                 "statement": hypothesis.statement,
             }
         )
@@ -58,6 +61,12 @@ def hypotheses_to_markdown(hypotheses: list[Hypothesis], brief: ResearchBrief) -
                 f"**Механизм:** {hypothesis.mechanism}.",
                 "",
                 f"**Обоснование:** {hypothesis.rationale}",
+                "",
+                "**Расчетные проверки:**",
+                *[
+                    f"- {item.name}: {item.status}, {item.value}. {item.rationale}"
+                    for item in hypothesis.calculations
+                ],
                 "",
                 "**Риски:**",
                 *[f"- {risk}" for risk in hypothesis.risks],

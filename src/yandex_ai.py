@@ -15,7 +15,11 @@ def is_yandex_configured() -> bool:
     return bool(os.getenv("YANDEX_API_KEY") and os.getenv("YANDEX_FOLDER_ID"))
 
 
-def generate_expert_summary(brief: ResearchBrief, hypotheses: list[Hypothesis]) -> str:
+def generate_expert_summary(
+    brief: ResearchBrief,
+    hypotheses: list[Hypothesis],
+    long_context: str | None = None,
+) -> str:
     api_key = os.getenv("YANDEX_API_KEY")
     folder_id = os.getenv("YANDEX_FOLDER_ID")
     model = os.getenv("YANDEX_MODEL", DEFAULT_MODEL)
@@ -33,14 +37,15 @@ def generate_expert_summary(brief: ResearchBrief, hypotheses: list[Hypothesis]) 
             {
                 "role": "system",
                 "text": (
-                    "Ты научный консультант промышленной лаборатории. "
-                    "Дай краткий экспертный вывод по гипотезам, не выдумывай источники "
-                    "и явно разделяй эффект, риски и первый эксперимент."
+                    "Ты управляющий агент научной фабрики гипотез. "
+                    "Используй GraphRAG-связи, цитаты источников и результаты калькуляторов. "
+                    "Не выдумывай источники. Явно разделяй эффект, риски, расчетные ограничения "
+                    "и первый лабораторный эксперимент."
                 ),
             },
             {
                 "role": "user",
-                "text": _build_prompt(brief, hypotheses),
+                "text": long_context or _build_prompt(brief, hypotheses),
             },
         ],
     }

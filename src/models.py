@@ -28,6 +28,15 @@ class Evidence:
 
 
 @dataclass(frozen=True)
+class CalculationResult:
+    name: str
+    status: str
+    value: str
+    rationale: str
+    assumptions: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Hypothesis:
     title: str
     statement: str
@@ -44,6 +53,7 @@ class Hypothesis:
     risks: list[str]
     resources: list[str]
     tags: list[str]
+    calculations: list[CalculationResult] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

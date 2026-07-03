@@ -37,9 +37,9 @@ import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
 
+from src.agentic_pipeline import AgenticResult, run_agentic_factory
 from src.exporters import hypotheses_to_frame, hypotheses_to_json, hypotheses_to_markdown
 from src.graphing import build_relation_graph, graph_to_plotly_data
-from src.hypothesis_engine import generate_hypotheses
 from src.ingestion import chunk_documents, load_documents_from_paths, load_uploaded_files
 from src.models import ResearchBrief
 from src.retrieval import KnowledgeIndex
@@ -55,7 +55,7 @@ load_dotenv()
 def main() -> None:
     st.set_page_config(page_title="Фабрика гипотез", page_icon="H", layout="wide")
     st.title("Фабрика гипотез")
-    st.caption("Интерпретируемый RAG-прототип для генерации и приоритизации НИОКР-гипотез")
+    st.caption("Гибридная агентная архитектура: GraphRAG + Long-Context LLM + расчетные калькуляторы")
 
     with st.sidebar:
         st.header("Входные данные")
@@ -124,19 +124,22 @@ def main() -> None:
         _render_requirements_match()
         return
 
-    with st.spinner("Индексирую источники и строю гипотезы..."):
+    with st.spinner("Запускаю агентный пайплайн: GraphRAG, генерация, калькуляторы, LLM-контекст..."):
         documents = load_uploaded_files(uploaded_files) if uploaded_files else load_documents_from_paths(SAMPLE_DIR.glob("*"))
         chunks = chunk_documents(documents)
         if not chunks:
             st.error("Не удалось извлечь текст из источников. Загрузите файлы или добавьте демо-данные.")
             return
         index = KnowledgeIndex.build(chunks)
-        hypotheses = generate_hypotheses(brief, index, limit=limit)
+        result = run_agentic_factory(brief, index, chunks, limit=limit)
+        hypotheses = result.hypotheses
 
     st.success(f"Сформировано гипотез: {len(hypotheses)}. Источников: {len(documents)}. Фрагментов: {len(chunks)}.")
 
     if use_yandex:
-        _render_yandex_summary(brief, hypotheses)
+        _render_yandex_summary(brief, hypotheses, result.long_context)
+    _render_agent_trace(result)
+    _render_graph_context(result)
     _render_rank_table(hypotheses)
     _render_graph(hypotheses)
     _render_cards(hypotheses)
@@ -149,14 +152,15 @@ def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
 
 
 def _render_requirements_match() -> None:
-    st.subheader("Что закрывает прототип")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Входы", "PDF/DOCX/XLSX/TXT")
-    col2.metric("Объяснимость", "цитаты + скоринг")
-    col3.metric("Экспорт", "JSON/CSV/MD")
+    st.subheader("Гибридная архитектура")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("GraphRAG", "сущности + связи")
+    col2.metric("LLM", "long-context")
+    col3.metric("Калькуляторы", "правила + физика")
+    col4.metric("Экспорт", "JSON/CSV/MD")
     st.write(
-        "Система принимает цель, ограничения и базу знаний, извлекает релевантные фрагменты, "
-        "генерирует проверяемые гипотезы, ранжирует их по настраиваемым критериям и формирует план проверки."
+        "Система принимает цель, ограничения и базу знаний, строит граф материалов, процессов, свойств и источников, "
+        "расширяет поиск через GraphRAG, проверяет гипотезы расчетными агентами и передает полный контекст в YandexGPT."
     )
 
 
@@ -175,6 +179,7 @@ def _render_rank_table(hypotheses) -> None:
                 "risk",
                 "confidence",
                 "sources",
+                "calculators",
             ]
         ],
         hide_index=True,
@@ -182,14 +187,39 @@ def _render_rank_table(hypotheses) -> None:
     )
 
 
-def _render_yandex_summary(brief: ResearchBrief, hypotheses) -> None:
-    st.subheader("Экспертная сводка YandexGPT")
+def _render_yandex_summary(brief: ResearchBrief, hypotheses, long_context: str) -> None:
+    st.subheader("Long-Context LLM агент")
     try:
-        with st.spinner("Запрашиваю экспертную сводку в Yandex AI Studio..."):
-            summary = generate_expert_summary(brief, hypotheses)
+        with st.spinner("Передаю GraphRAG-контекст и расчеты в Yandex AI Studio..."):
+            summary = generate_expert_summary(brief, hypotheses, long_context=long_context)
         st.info(summary)
     except Exception as exc:
         st.warning(f"YandexGPT недоступен, базовая генерация сохранена: {exc}")
+
+
+def _render_agent_trace(result: AgenticResult) -> None:
+    st.subheader("Трассировка агентов")
+    cols = st.columns(len(result.steps))
+    for col, step in zip(cols, result.steps):
+        col.metric(step.agent, step.status)
+        col.caption(step.result)
+
+
+def _render_graph_context(result: AgenticResult) -> None:
+    st.subheader("GraphRAG контекст")
+    stats = result.graph_index.stats()
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Узлы", stats["nodes"])
+    c2.metric("Связи", stats["edges"])
+    c3.metric("Материалы", stats["materials"])
+    c4.metric("Процессы", stats["processes"])
+    c5.metric("Свойства", stats["properties"])
+    if result.graph_context.related_terms:
+        st.caption("Связанные узлы: " + ", ".join(result.graph_context.related_terms[:10]))
+    if result.graph_context.graph_path:
+        with st.expander("Объяснимые пути в графе"):
+            for path in result.graph_context.graph_path:
+                st.write(f"- {path}")
 
 
 def _render_graph(hypotheses) -> None:
@@ -246,6 +276,12 @@ def _render_cards(hypotheses) -> None:
             st.markdown("**Риски**")
             for risk in hypothesis.risks:
                 st.write(f"- {risk}")
+
+            if hypothesis.calculations:
+                st.markdown("**Расчетные проверки**")
+                for result in hypothesis.calculations:
+                    st.write(f"- {result.name}: `{result.status}` · {result.value}")
+                    st.caption(result.rationale)
 
             st.markdown("**Источники**")
             for item in hypothesis.evidence:
