@@ -187,6 +187,7 @@ def _render_saved_result(saved: dict) -> None:
     _render_yandex_summary(saved.get("yandex_summary"), saved.get("yandex_error"))
     _render_agent_trace(result)
     _render_graph_context(result)
+    _render_all_sources(saved.get("source_inventory", []))
     _render_rank_table(hypotheses)
     _render_graph(hypotheses)
     _render_cards(hypotheses)
@@ -233,6 +234,15 @@ def _render_source_types(source_types: dict[str, int], source_inventory: list[di
                 st.write(f"- {source}")
     else:
         st.caption(f"Типы источников: {summary}.")
+
+
+def _render_all_sources(source_inventory: list[dict[str, str]]) -> None:
+    if not source_inventory:
+        return
+    st.subheader("Все загруженные источники")
+    with st.expander(f"Показать все источники ({len(source_inventory)})", expanded=False):
+        for item in source_inventory:
+            st.write(f"- {item['source']} · тип: {item['extension']}")
 
 
 def _render_requirements_match() -> None:
