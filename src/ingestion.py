@@ -19,6 +19,7 @@ from .text_normalization import append_normalized_terms
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx", ".csv", ".xlsx", *IMAGE_EXTENSIONS}
 OCR_LANGUAGES = os.getenv("OCR_LANGUAGES", "rus+eng+chi_sim")
+OCR_TIMEOUT_SECONDS = int(os.getenv("OCR_TIMEOUT_SECONDS", "6"))
 
 
 def normalize_text(text: str) -> str:
@@ -161,7 +162,7 @@ def _try_ocr(image: Image.Image) -> str:
     except ImportError:
         return ""
     try:
-        text = pytesseract.image_to_string(image, lang=OCR_LANGUAGES)
+        text = pytesseract.image_to_string(image, lang=OCR_LANGUAGES, timeout=OCR_TIMEOUT_SECONDS)
     except Exception:
         return ""
     return normalize_text(text)

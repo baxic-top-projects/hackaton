@@ -12,6 +12,8 @@ from .models import CalculationResult, Hypothesis
 
 
 CACHE_PATH = Path("data/novelty_cache.json")
+NOVELTY_TIMEOUT_SECONDS = float(os.getenv("NOVELTY_TIMEOUT_SECONDS", "1.5"))
+NOVELTY_MAX_CHECKS = int(os.getenv("NOVELTY_MAX_CHECKS", "2"))
 
 
 def novelty_check_enabled() -> bool:
@@ -22,7 +24,10 @@ def apply_external_novelty_check(hypotheses: list[Hypothesis]) -> list[Hypothesi
     if not novelty_check_enabled():
         return hypotheses
     cache = _load_cache()
-    enriched = [_check_one(hypothesis, cache) for hypothesis in hypotheses]
+    enriched = [
+        _check_one(hypothesis, cache) if idx < NOVELTY_MAX_CHECKS else hypothesis
+        for idx, hypothesis in enumerate(hypotheses)
+    ]
     _save_cache(cache)
     return enriched
 
@@ -86,7 +91,7 @@ def _search_crossref(query: str) -> dict:
     try:
         response = requests.get(
             f"https://api.crossref.org/works?query={quote_plus(query)}&rows=3",
-            timeout=4,
+            timeout=NOVELTY_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         items = response.json().get("message", {}).get("items", [])
@@ -105,7 +110,7 @@ def _search_semantic_scholar(query: str) -> dict:
         response = requests.get(
             "https://api.semanticscholar.org/graph/v1/paper/search",
             params={"query": query, "limit": 3, "fields": "title,year,url"},
-            timeout=4,
+            timeout=NOVELTY_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         papers = response.json().get("data", [])
@@ -127,7 +132,7 @@ def _search_patentsview(query: str) -> dict:
         "o": {"per_page": 3},
     }
     try:
-        response = requests.post("https://api.patentsview.org/patents/query", json=payload, timeout=4)
+        response = requests.post("https://api.patentsview.org/patents/query", json=payload, timeout=NOVELTY_TIMEOUT_SECONDS)
         response.raise_for_status()
         patents = response.json().get("patents", [])
     except Exception:

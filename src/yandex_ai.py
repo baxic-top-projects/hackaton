@@ -23,6 +23,7 @@ def generate_expert_summary(
     api_key = os.getenv("YANDEX_API_KEY")
     folder_id = os.getenv("YANDEX_FOLDER_ID")
     model = os.getenv("YANDEX_MODEL", DEFAULT_MODEL)
+    timeout = int(os.getenv("YANDEX_TIMEOUT_SECONDS", "15"))
     if not api_key or not folder_id:
         return "Yandex AI Studio не настроен: задайте YANDEX_API_KEY и YANDEX_FOLDER_ID."
 
@@ -53,7 +54,7 @@ def generate_expert_summary(
         YANDEX_COMPLETION_URL,
         headers={"Authorization": f"Api-Key {api_key}"},
         json=payload,
-        timeout=45,
+        timeout=timeout,
     )
     response.raise_for_status()
     data = response.json()
