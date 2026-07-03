@@ -38,7 +38,6 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.agentic_pipeline import AgenticResult, run_agentic_factory
-from src.case_data import CaseProfile, build_case_profile, case_data_available, load_case_documents
 from src.exporters import hypotheses_to_frame, hypotheses_to_json, hypotheses_to_markdown
 from src.graphing import build_relation_graph, graph_to_plotly_data
 from src.ingestion import chunk_documents, load_documents_from_paths, load_uploaded_files
@@ -58,60 +57,31 @@ def main() -> None:
     st.title("Фабрика гипотез")
     st.caption("Гибридная агентная архитектура: GraphRAG + Long-Context LLM + расчетные калькуляторы")
 
-    case_available = case_data_available()
-    case_profile = _cached_case_profile() if case_available else None
+    use_yandex = is_yandex_configured()
 
     with st.sidebar:
         st.header("Входные данные")
-        use_case_data = st.checkbox(
-            "Использовать данные кейса Яндекс.Диска",
-            value=case_available,
-            disabled=not case_available,
-        )
-        if not case_available:
-            st.caption("Данные кейса не скачаны. Запустите `python scripts/download_case_data.py`.")
-
         target = st.text_area(
             "Целевое свойство или технологическая проблема",
-            value=(
-                case_profile.target
-                if use_case_data and case_profile
-                else "Повысить жаропрочность никелевого сплава на 15% без существенного снижения пластичности"
-            ),
+            value="Повысить жаропрочность никелевого сплава на 15% без существенного снижения пластичности",
             height=90,
         )
         constraints = st.text_area(
             "Ограничения",
-            value=(
-                case_profile.constraints
-                if use_case_data and case_profile
-                else "Использовать доступные легирующие элементы; избегать сильного роста себестоимости; лабораторная проверка за 2 недели"
-            ),
+            value="Использовать доступные легирующие элементы; избегать сильного роста себестоимости; лабораторная проверка за 2 недели",
             height=140,
         )
         available_materials = st.text_input(
             "Доступное сырье",
-            value=(
-                case_profile.available_materials
-                if use_case_data and case_profile
-                else "никель, хром, ниобий, титан, молибден, бор"
-            ),
+            value="никель, хром, ниобий, титан, молибден, бор",
         )
         equipment = st.text_input(
             "Оборудование",
-            value=(
-                case_profile.equipment
-                if use_case_data and case_profile
-                else "вакуумная плавка, печь отжига, установка старения, испытательная машина"
-            ),
+            value="вакуумная плавка, печь отжига, установка старения, испытательная машина",
         )
         budget = st.text_input(
             "Бюджет/сроки",
-            value=(
-                case_profile.budget
-                if use_case_data and case_profile
-                else "средний бюджет, 2 недели на первичный скрининг"
-            ),
+            value="средний бюджет, 2 недели на первичный скрининг",
         )
 
         st.subheader("Веса ранжирования")
@@ -123,16 +93,13 @@ def main() -> None:
 
         uploaded_files = st.file_uploader(
             "Загрузить базу знаний",
-            type=["txt", "md", "pdf", "docx", "csv", "xlsx"],
+            type=["txt", "md", "pdf", "docx", "csv", "xlsx", "png", "jpg", "jpeg", "webp"],
             accept_multiple_files=True,
         )
         limit = st.slider("Количество гипотез", 3, 12, 6)
-        use_yandex = st.checkbox(
-            "Добавить экспертную сводку YandexGPT",
-            value=is_yandex_configured(),
-            disabled=not is_yandex_configured(),
-        )
-        if not is_yandex_configured():
+        if use_yandex:
+            st.caption("YandexGPT используется автоматически для экспертной сводки.")
+        else:
             st.caption("Для LLM-режима задайте YANDEX_API_KEY и YANDEX_FOLDER_ID.")
         run = st.button("Сгенерировать гипотезы", type="primary", use_container_width=True)
 
@@ -155,20 +122,13 @@ def main() -> None:
     )
 
     if not run:
-        st.info(
-            "Нажмите кнопку генерации. Если файлы не загружены, будут использованы данные кейса Яндекс.Диска "
-            "или встроенная демо-база знаний."
-        )
+        st.info("Нажмите кнопку генерации. Если файлы не загружены, будет использована встроенная демо-база знаний.")
         _render_requirements_match()
-        if use_case_data and case_profile:
-            _render_case_profile(case_profile)
         return
 
     with st.spinner("Запускаю агентный пайплайн: GraphRAG, генерация, калькуляторы, LLM-контекст..."):
         if uploaded_files:
             documents = load_uploaded_files(uploaded_files)
-        elif use_case_data and case_profile:
-            documents = _cached_case_documents()
         else:
             documents = load_documents_from_paths(SAMPLE_DIR.glob("*"))
         chunks = chunk_documents(documents)
@@ -181,8 +141,6 @@ def main() -> None:
 
     st.success(f"Сформировано гипотез: {len(hypotheses)}. Источников: {len(documents)}. Фрагментов: {len(chunks)}.")
 
-    if use_case_data and case_profile:
-        _render_case_profile(case_profile)
     if use_yandex:
         _render_yandex_summary(brief, hypotheses, result.long_context)
     _render_agent_trace(result)
@@ -198,16 +156,6 @@ def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
     return {key: value / total for key, value in weights.items()}
 
 
-@st.cache_data(show_spinner=False)
-def _cached_case_profile() -> CaseProfile:
-    return build_case_profile()
-
-
-@st.cache_data(show_spinner=False)
-def _cached_case_documents():
-    return load_case_documents()
-
-
 def _render_requirements_match() -> None:
     st.subheader("Гибридная архитектура")
     col1, col2, col3, col4 = st.columns(4)
@@ -219,20 +167,6 @@ def _render_requirements_match() -> None:
         "Система принимает цель, ограничения и базу знаний, строит граф материалов, процессов, свойств и источников, "
         "расширяет поиск через GraphRAG, проверяет гипотезы расчетными агентами и передает полный контекст в YandexGPT."
     )
-
-
-def _render_case_profile(profile: CaseProfile) -> None:
-    st.subheader("Ограничения из данных кейса")
-    total_tailings = sum(metric.smt or 0 for metric in profile.metrics if "отвальные" in metric.stream.lower())
-    total_ni = sum(metric.ni_tons or 0 for metric in profile.metrics if "отвальные" in metric.stream.lower())
-    total_cu = sum(metric.cu_tons or 0 for metric in profile.metrics if "отвальные" in metric.stream.lower())
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Отвальные хвосты, СМТ", f"{total_tailings:,.0f}")
-    c2.metric("Потери Ni, т", f"{total_ni:,.0f}")
-    c3.metric("Потери Cu, т", f"{total_cu:,.0f}")
-    c4.metric("Источники кейса", len(profile.source_files))
-    st.caption("Классы крупности: " + (", ".join(profile.particle_classes[:8]) or "нет данных"))
-    st.caption("Формы потерь: " + (", ".join(profile.loss_forms[:8]) or "нет данных"))
 
 
 def _render_rank_table(hypotheses) -> None:

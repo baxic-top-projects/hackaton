@@ -7,12 +7,14 @@ from typing import Iterable
 
 import pandas as pd
 from docx import Document as DocxDocument
+from PIL import Image
 from pypdf import PdfReader
 
 from .models import Chunk, Document
 
 
-SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx", ".csv", ".xlsx"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx", ".csv", ".xlsx", *IMAGE_EXTENSIONS}
 
 
 def normalize_text(text: str) -> str:
@@ -106,6 +108,8 @@ def _read_path(path: Path) -> str:
         return "\n".join(
             _frame_to_text(frame, source=f"{path.name}:{sheet}") for sheet, frame in frames.items()
         )
+    if suffix in IMAGE_EXTENSIONS:
+        return _image_to_text(path)
     return ""
 
 
@@ -115,3 +119,21 @@ def _frame_to_text(frame: pd.DataFrame, source: str) -> str:
         values = "; ".join(f"{column}: {row[column]}" for column in frame.columns)
         records.append(f"{source} row {idx + 1}: {values}")
     return "\n".join(records)
+
+
+def _image_to_text(path: Path) -> str:
+    with Image.open(path) as image:
+        width, height = image.size
+        mode = image.mode
+    parent = path.parent.name.lower()
+    if "схем" in parent or "scheme" in parent:
+        kind = "схема флотации"
+    elif "регламент" in parent or "equipment" in parent:
+        kind = "регламентный визуальный материал"
+    else:
+        kind = "загруженное изображение"
+    return (
+        f"{kind}: {path.name}. Формат {path.suffix.lower()}, размер {width}x{height}, режим {mode}. "
+        "Учитывать как визуальный источник ограничений по оборудованию, схеме процесса или регламенту. "
+        "Если на изображении есть подписи, пользователь должен продублировать критичные параметры в текстовом описании."
+    )
