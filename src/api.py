@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
-import os
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .agentic_pipeline import run_agentic_factory
+from .auth import has_role, role_for_api_token
 from .ingestion import chunk_documents, load_documents_from_paths, normalize_text
 from .metadata import extract_metadata
 from .models import Document, ResearchBrief
@@ -50,14 +50,17 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
-    expected = os.getenv("API_AUTH_TOKEN")
-    if expected and x_api_key != expected:
+def require_api_role(x_api_key: str | None = Header(default=None)) -> str:
+    role = role_for_api_token(x_api_key)
+    if role is None:
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header.")
+    if not has_role(role, "researcher"):
+        raise HTTPException(status_code=403, detail="Insufficient API role.")
+    return role
 
 
 @app.post("/api/generate")
-def generate(request: GenerateRequest, _: None = Depends(require_api_key)) -> dict[str, Any]:
+def generate(request: GenerateRequest, role: str = Depends(require_api_role)) -> dict[str, Any]:
     brief = ResearchBrief(
         target=request.target,
         constraints=request.constraints,
@@ -80,6 +83,7 @@ def generate(request: GenerateRequest, _: None = Depends(require_api_key)) -> di
         "steps": [asdict(step) for step in result.steps],
         "graph_stats": result.graph_index.stats(),
         "graph_paths": result.graph_files,
+        "api_role": role,
     }
 
 

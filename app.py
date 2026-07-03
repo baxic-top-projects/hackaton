@@ -42,6 +42,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.agentic_pipeline import AgenticResult, run_agentic_factory
+from src.auth import has_role, role_for_ui_token
 from src.exporters import (
     hypotheses_to_docx,
     hypotheses_to_frame,
@@ -65,13 +66,11 @@ load_dotenv()
 
 
 def _check_ui_access() -> bool:
-    expected = os.getenv("APP_AUTH_TOKEN")
-    if not expected:
-        st.session_state.setdefault("role", "admin")
-        return True
     provided = st.sidebar.text_input("Access token", type="password")
-    if provided == expected:
-        st.session_state.setdefault("role", "expert")
+    role = role_for_ui_token(provided)
+    if role is not None:
+        st.session_state["authenticated_role"] = role
+        st.session_state.setdefault("role", role)
         return True
     st.warning("Введите access token для локального контура НИИ.")
     return False
@@ -81,14 +80,19 @@ def _render_role_selector() -> None:
     role = st.selectbox(
         "Роль",
         ["researcher", "expert", "viewer", "admin"],
-        index=["researcher", "expert", "viewer", "admin"].index(st.session_state.get("role", "researcher")),
+        index=["researcher", "expert", "viewer", "admin"].index(st.session_state.get("role", st.session_state.get("authenticated_role", "researcher"))),
         help="viewer только смотрит отчеты; expert/admin могут сохранять feedback и создавать задачи.",
     )
-    st.session_state["role"] = role
+    authenticated_role = st.session_state.get("authenticated_role", "viewer")
+    if has_role(authenticated_role, role):
+        st.session_state["role"] = role
+    else:
+        st.session_state["role"] = authenticated_role
+        st.caption(f"Роль ограничена токеном: {authenticated_role}")
 
 
 def _can_edit() -> bool:
-    return st.session_state.get("role") in {"expert", "admin"}
+    return has_role(st.session_state.get("role"), "expert")
 
 
 def main() -> None:

@@ -34,6 +34,28 @@ def persist_graph(index: GraphRAGIndex, target_dir: Path = DEFAULT_GRAPH_DIR) ->
     }
 
 
+def query_neo4j_graph_stats() -> dict[str, int | str]:
+    uri = os.getenv("NEO4J_URI")
+    user = os.getenv("NEO4J_USER")
+    password = os.getenv("NEO4J_PASSWORD")
+    database = os.getenv("NEO4J_DATABASE", "neo4j")
+    if not (uri and user and password):
+        return {"status": "not_configured"}
+    try:
+        from neo4j import GraphDatabase
+    except ImportError:
+        return {"status": "neo4j_driver_missing"}
+    try:
+        driver = GraphDatabase.driver(uri, auth=(user, password))
+        with driver.session(database=database) as session:
+            nodes = session.run("MATCH (n:HFNode) RETURN count(n) AS count").single()["count"]
+            edges = session.run("MATCH (:HFNode)-[r:HF_RELATION]->(:HFNode) RETURN count(r) AS count").single()["count"]
+        driver.close()
+    except Exception as exc:
+        return {"status": f"error: {exc}"}
+    return {"status": "ok", "nodes": int(nodes), "edges": int(edges)}
+
+
 def _to_turtle(graph: nx.Graph) -> str:
     lines = [
         "@prefix hf: <https://hypothesis-factory.local/ontology#> .",

@@ -10,6 +10,8 @@ Streamlit-прототип для задачи Норникель AI Hackathon: 
 - Запускает гибридный пайплайн: ingestion, GraphRAG retrieval, генерация гипотез, расчетная валидация, подготовка long-context для LLM.
 - Генерирует проверяемые гипотезы по шаблонам материаловедения и металлургических процессов.
 - Проверяет гипотезы внешними калькуляторами: стоимость легирования, наличие оборудования, прогноз KPI-эффекта, термоокно, баланс процесса.
+- Выполняет контрфактуальный анализ: baseline, сценарий без ключевого фактора и замена процесса ближайшей альтернативой.
+- Запускает предсказательную surrogate-модель `RandomForestRegressor` для оценки ожидаемого KPI uplift.
 - Извлекает OCR-текст из изображений при наличии Tesseract (`rus`, `eng`, `chi_sim`); без OCR учитывает изображения как визуальные источники с метаданными.
 - Нормализует английские и китайские доменные термины в русскую онтологию (`tailings`, `flotation`, `尾矿`, `浮选` и др.).
 - Извлекает метаданные из источников: даты, авторов, условия экспериментов (`pH`, температура, проценты, крупность).
@@ -20,9 +22,39 @@ Streamlit-прототип для задачи Норникель AI Hackathon: 
 - Сохраняет GraphRAG-граф в `JSON`, `GraphML`, `RDF/Turtle` и опционально синхронизирует его в Neo4j.
 - Экспортирует результат в CSV, JSON, Markdown, DOCX и PDF-отчет.
 - Сохраняет экспертную обратную связь по гипотезам в `data/feedback.json`.
-- Предоставляет HTTP API `/api/generate`, опциональную авторизацию и отправку гипотез в Jira/YouTrack.
+- Предоставляет HTTP API `/api/generate`, role-based token auth и отправку гипотез в Jira/YouTrack.
 
 ## Быстрый запуск
+
+## Публичное демо
+
+- UI: `https://hackaton.baxic.ru`
+- API: `https://hypothesisapi.baxic.ru`
+- API Docs: `https://hypothesisapi.baxic.ru/docs`
+- Healthcheck: `https://hypothesisapi.baxic.ru/health`
+
+Если задан `API_AUTH_TOKEN`, API-запросы должны передавать заголовок `X-API-Key`.
+
+Реальные токены не хранятся в README и задаются в `.env` на сервере:
+
+```env
+APP_AUTH_TOKEN=<UI access token>
+API_AUTH_TOKEN=<API access token>
+# опционально несколько ролей:
+APP_TOKENS=viewer-token:viewer,expert-token:expert,admin-token:admin
+API_TOKENS=reader-token:viewer,research-token:researcher,admin-token:admin
+```
+
+Пример:
+
+```bash
+curl -X POST https://hypothesisapi.baxic.ru/api/generate \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_AUTH_TOKEN>" \
+  -d '{"target":"снизить потери Ni в хвостах","limit":3}'
+```
+
+## Локальный запуск
 
 ```powershell
 python -m venv .venv
@@ -104,6 +136,9 @@ NOVELTY_CHECK_ENABLED=0
 ```powershell
 APP_AUTH_TOKEN=local-ui-token
 API_AUTH_TOKEN=external-api-token
+# или несколько токенов с ролями
+APP_TOKENS=viewer-token:viewer,expert-token:expert,admin-token:admin
+API_TOKENS=reader-token:viewer,research-token:researcher,admin-token:admin
 ```
 
 При заданном `API_AUTH_TOKEN` внешние клиенты должны передавать заголовок `X-API-Key`.
@@ -134,12 +169,14 @@ flowchart LR
     ingestion --> textIndex["Hashing retrieval индекс"]
     ingestion --> graphIndex["GraphRAG граф сущностей и параметров"]
     textIndex --> graphRetrieval["GraphRAG retrieval"]
-    graphIndex --> graphStore["JSON/GraphML/RDF + Neo4j"]
+    graphIndex --> graphStore["JSON/GraphML/RDF + Neo4j query"]
     graphIndex --> graphRetrieval
     graphRetrieval --> generator["Генерация гипотез"]
-    generator --> calculators["Символьные и физические калькуляторы"]
+    generator --> counterfactual["Counterfactual analysis"]
+    counterfactual --> calculators["Символьные и физические калькуляторы"]
     calculators --> novelty["Crossref/S2/Patents novelty"]
-    novelty --> feedback["ML feedback reranking"]
+    calculators --> predictive["Predictive KPI model"]
+    predictive --> feedback["ML feedback reranking"]
     feedback --> llmContext["Long-context пакет"]
     llmContext --> yandex["YandexGPT"]
     feedback --> cards["Карточки гипотез"]
@@ -152,3 +189,34 @@ flowchart LR
 Решение не просто генерирует текст, а сохраняет трассировку к источникам и промежуточным расчетам: каждая гипотеза содержит цитаты, GraphRAG-обоснование, механизм влияния, расчетные проверки, прогнозный диапазон KPI-эффекта, риски, ресурсы и план проверки. Веса критериев и экспертная обратная связь помогают менять стратегию ранжирования под конкретную лабораторию, бюджет или горизонт проверки.
 
 Базовый прототип работает локально и не требует внешних API. Это важно для конфиденциальных промышленных данных и для стабильного демо. Опциональные внешние слои Yandex AI Studio, Crossref/Semantic Scholar/PatentsView, Neo4j и Jira/YouTrack подключаются через `.env`, но не заменяют GraphRAG/scoring/calculators и не ломают офлайн-режим.
+
+## Соответствие требованиям кейса
+
+Проект закрывает требования кейса на уровне хакатонного MVP: это комплексная "Фабрика гипотез", а не только RAG-чат.
+
+- Полезность для исследователей: гипотезы конкретные, проверяемые, с механизмом влияния, ресурсами, рисками и дорожной картой проверки.
+- Прозрачность и обоснованность: есть цитаты источников, GraphRAG-связи, объяснимые пути в графе, расчетные проверки, novelty-check и counterfactual explanation.
+- Гибкость входных данных: поддержаны `txt/md/pdf/docx/csv/xlsx/png/jpg/jpeg/webp`, OCR, fallback для шумных данных, метаданные и мультиязычная нормализация.
+- Масштабируемость: архитектура модульная — ingestion, retrieval, GraphRAG, calculators, counterfactual, predictive KPI, novelty, feedback, exporters, API. Граф хранится в `JSON/GraphML/RDF` и Neo4j.
+- Интеграция: есть публичный API, Swagger, CSV/JSON, PDF/DOCX, Jira/YouTrack, Docker Compose и Neo4j.
+
+Функциональные требования также закрыты:
+
+- Прием и предобработка данных: парсинг документов, таблиц, изображений, OCR, метаданные — даты, авторы, условия экспериментов, `pH`, температура, проценты, крупность.
+- Генерация гипотез: извлечение сущностей и связей, паттерны, контрфактуальный анализ, predictive KPI model и ranking.
+- Обоснование и визуализация: карточки гипотез, граф связей, GraphRAG-контекст, источники, цитаты, риски, uncertainty через confidence/risk/novelty.
+- Экспорт и интеграция: PDF/DOCX, CSV/JSON/Markdown, API, Jira/YouTrack, feedback learning.
+
+Нефункциональные требования:
+
+- Интерпретируемость: каждый шаг виден через agent trace, источники, граф, калькуляторы, novelty и counterfactual.
+- Мультиязычность: OCR `rus+eng+chi_sim`, нормализация английских и китайских терминов в русскую онтологию.
+- Надежность: fallback для пустых и шумных данных, `HashingVectorizer`, офлайн-режим без внешних API.
+- Производительность: генерация рассчитана на интерактивный режим, без тяжелых моделей в основном цикле.
+- Безопасность: локальный Docker-контур, UI token, API token, role-based access, Neo4j во внутренней сети.
+
+Ограничения MVP честно обозначены: novelty screening не заменяет промышленную патентную экспертизу, predictive KPI surrogate не является полноценной физико-химической симуляцией, token-based RBAC не заменяет корпоративный SSO. Для хакатонного решения эти ограничения компенсируются интерпретируемостью, модульностью и готовностью к интеграции.
+
+Короткая формулировка для защиты:
+
+> Мы реализовали гибридную агентную фабрику гипотез: GraphRAG + Long-Context LLM + counterfactual analysis + predictive KPI model + novelty screening + expert feedback learning, с экспортом в отчеты, API, таск-трекеры и Neo4j-backed graph storage.

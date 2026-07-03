@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from .calculators import run_calculators
+from .counterfactual import apply_counterfactual_analysis
 from .feedback import apply_feedback_reranking
 from .graph_rag import GraphContext, GraphRAGIndex
-from .graph_storage import persist_graph
+from .graph_storage import persist_graph, query_neo4j_graph_stats
 from .hypothesis_engine import generate_hypotheses
 from .models import Chunk, Hypothesis, ResearchBrief
 from .novelty import apply_external_novelty_check, novelty_check_enabled
+from .predictive import apply_predictive_kpi_model
 from .retrieval import KnowledgeIndex
 
 
@@ -40,6 +42,7 @@ def run_agentic_factory(
     ]
     graph_index = GraphRAGIndex.build(chunks)
     graph_files = persist_graph(graph_index)
+    neo4j_stats = query_neo4j_graph_stats()
     graph_context = graph_index.retrieve(_brief_query(brief), text_index, limit=8)
     stats = graph_index.stats()
     steps.append(
@@ -53,9 +56,21 @@ def run_agentic_factory(
             ),
         )
     )
+    if neo4j_stats.get("status") == "ok":
+        steps.append(
+            AgentStep(
+                "Neo4jGraphAgent",
+                "ok",
+                f"Neo4j queried: {neo4j_stats.get('nodes')} узлов, {neo4j_stats.get('edges')} связей.",
+            )
+        )
 
     hypotheses = generate_hypotheses(brief, text_index, limit=limit)
     enriched = [_enrich_hypothesis(item, brief, graph_context) for item in hypotheses]
+    enriched = apply_counterfactual_analysis(enriched, brief)
+    steps.append(AgentStep("CounterfactualAgent", "ok", "Сравнены baseline, сценарий без фактора и альтернативный процесс."))
+    enriched = apply_predictive_kpi_model(enriched, brief)
+    steps.append(AgentStep("PredictiveKPIAgent", "ok", "RandomForest surrogate model пересчитал expected KPI uplift."))
     if novelty_check_enabled():
         enriched = apply_external_novelty_check(enriched)
         steps.append(AgentStep("NoveltyAgent", "ok", "Проверка похожих публикаций и патентов выполнена."))
