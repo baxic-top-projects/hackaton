@@ -168,6 +168,7 @@ def _generate_and_store_result(
         "hypotheses": hypotheses,
         "document_count": len(documents),
         "source_types": _source_type_counts(documents),
+        "source_inventory": _source_inventory(documents),
         "chunk_count": len(chunks),
         "yandex_summary": yandex_summary,
         "yandex_error": yandex_error,
@@ -182,7 +183,7 @@ def _render_saved_result(saved: dict) -> None:
         f"Сформировано гипотез: {len(hypotheses)}. "
         f"Источников: {saved['document_count']}. Фрагментов: {saved['chunk_count']}."
     )
-    _render_source_types(saved.get("source_types", {}))
+    _render_source_types(saved.get("source_types", {}), saved.get("source_inventory", []))
     _render_yandex_summary(saved.get("yandex_summary"), saved.get("yandex_error"))
     _render_agent_trace(result)
     _render_graph_context(result)
@@ -205,13 +206,31 @@ def _source_type_counts(documents) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def _render_source_types(source_types: dict[str, int]) -> None:
+def _source_inventory(documents) -> list[dict[str, str]]:
+    inventory = []
+    for document in documents:
+        extension = str(document.metadata.get("extension", "")).lower().lstrip(".")
+        if not extension:
+            extension = Path(document.source).suffix.lower().lstrip(".") or "unknown"
+        inventory.append({"source": document.source, "extension": extension})
+    return sorted(inventory, key=lambda item: (item["extension"], item["source"]))
+
+
+def _render_source_types(source_types: dict[str, int], source_inventory: list[dict[str, str]]) -> None:
     if not source_types:
         return
     image_count = sum(source_types.get(ext, 0) for ext in ["png", "jpg", "jpeg", "webp"])
     summary = ", ".join(f"{ext}: {count}" for ext, count in source_types.items())
     if image_count:
         st.caption(f"Типы источников: {summary}. Изображений использовано: {image_count}.")
+        image_sources = [
+            item["source"]
+            for item in source_inventory
+            if item["extension"] in {"png", "jpg", "jpeg", "webp"}
+        ]
+        with st.expander("Использованные изображения"):
+            for source in image_sources:
+                st.write(f"- {source}")
     else:
         st.caption(f"Типы источников: {summary}.")
 
@@ -350,7 +369,8 @@ def _render_cards(hypotheses) -> None:
 
             st.markdown("**Источники**")
             for item in hypothesis.evidence:
-                st.caption(f"{item.source} · релевантность {item.score:.3f}")
+                source_type = Path(item.source).suffix.lower().lstrip(".") or "unknown"
+                st.caption(f"{item.source} · тип: {source_type} · релевантность {item.score:.3f}")
                 st.write(item.quote)
 
 
