@@ -121,11 +121,24 @@ def main() -> None:
         weights=weights,
     )
 
-    if not run:
+    if run:
+        _generate_and_store_result(brief, uploaded_files, limit, use_yandex)
+
+    saved = st.session_state.get("last_result")
+    if not saved:
         st.info("Нажмите кнопку генерации. Если файлы не загружены, будет использована встроенная демо-база знаний.")
         _render_requirements_match()
         return
 
+    _render_saved_result(saved)
+
+
+def _generate_and_store_result(
+    brief: ResearchBrief,
+    uploaded_files,
+    limit: int,
+    use_yandex: bool,
+) -> None:
     with st.spinner("Запускаю агентный пайплайн: GraphRAG, генерация, калькуляторы, LLM-контекст..."):
         if uploaded_files:
             documents = load_uploaded_files(uploaded_files)
@@ -139,10 +152,35 @@ def main() -> None:
         result = run_agentic_factory(brief, index, chunks, limit=limit)
         hypotheses = result.hypotheses
 
-    st.success(f"Сформировано гипотез: {len(hypotheses)}. Источников: {len(documents)}. Фрагментов: {len(chunks)}.")
-
+    yandex_summary = None
+    yandex_error = None
     if use_yandex:
-        _render_yandex_summary(brief, hypotheses, result.long_context)
+        try:
+            with st.spinner("Передаю GraphRAG-контекст и расчеты в Yandex AI Studio..."):
+                yandex_summary = generate_expert_summary(brief, hypotheses, long_context=result.long_context)
+        except Exception as exc:
+            yandex_error = f"YandexGPT недоступен, базовая генерация сохранена: {exc}"
+
+    st.session_state["last_result"] = {
+        "brief": brief,
+        "result": result,
+        "hypotheses": hypotheses,
+        "document_count": len(documents),
+        "chunk_count": len(chunks),
+        "yandex_summary": yandex_summary,
+        "yandex_error": yandex_error,
+    }
+
+
+def _render_saved_result(saved: dict) -> None:
+    brief = saved["brief"]
+    result = saved["result"]
+    hypotheses = saved["hypotheses"]
+    st.success(
+        f"Сформировано гипотез: {len(hypotheses)}. "
+        f"Источников: {saved['document_count']}. Фрагментов: {saved['chunk_count']}."
+    )
+    _render_yandex_summary(saved.get("yandex_summary"), saved.get("yandex_error"))
     _render_agent_trace(result)
     _render_graph_context(result)
     _render_rank_table(hypotheses)
@@ -192,14 +230,14 @@ def _render_rank_table(hypotheses) -> None:
     )
 
 
-def _render_yandex_summary(brief: ResearchBrief, hypotheses, long_context: str) -> None:
+def _render_yandex_summary(summary: str | None, error: str | None) -> None:
+    if not summary and not error:
+        return
     st.subheader("Long-Context LLM агент")
-    try:
-        with st.spinner("Передаю GraphRAG-контекст и расчеты в Yandex AI Studio..."):
-            summary = generate_expert_summary(brief, hypotheses, long_context=long_context)
+    if summary:
         st.info(summary)
-    except Exception as exc:
-        st.warning(f"YandexGPT недоступен, базовая генерация сохранена: {exc}")
+    if error:
+        st.warning(error)
 
 
 def _render_agent_trace(result: AgenticResult) -> None:
