@@ -1,0 +1,10 @@
+streamlit
+pandas
+scikit-learn
+networkx
+plotly
+pypdf
+python-docx
+openpyxl
+requests
+python-dotenv
