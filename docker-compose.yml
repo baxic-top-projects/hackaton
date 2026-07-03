@@ -1,0 +1,13 @@
+services:
+  hypothesis-factory:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hypothesis-factory
+    env_file:
+      - .env
+    ports:
+      - "8502:8502"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
