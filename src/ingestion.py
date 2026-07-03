@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Iterable
@@ -11,15 +12,18 @@ from PIL import Image
 from pypdf import PdfReader
 
 from .models import Chunk, Document
+from .metadata import extract_metadata
+from .text_normalization import append_normalized_terms
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx", ".csv", ".xlsx", *IMAGE_EXTENSIONS}
+OCR_LANGUAGES = os.getenv("OCR_LANGUAGES", "rus+eng+chi_sim")
 
 
 def normalize_text(text: str) -> str:
     text = re.sub(r"\s+", " ", text or "")
-    return text.strip()
+    return append_normalized_terms(text.strip())
 
 
 def load_documents_from_paths(paths: Iterable[Path]) -> list[Document]:
@@ -27,13 +31,18 @@ def load_documents_from_paths(paths: Iterable[Path]) -> list[Document]:
     for path in paths:
         if path.suffix.lower() not in SUPPORTED_EXTENSIONS or not path.exists():
             continue
-        text = _read_path(path)
+        raw_text = _read_path(path)
+        text = normalize_text(raw_text)
         if text:
             documents.append(
                 Document(
                     source=path.name,
-                    text=normalize_text(text),
-                    metadata={"path": str(path), "extension": path.suffix.lower()},
+                    text=text,
+                    metadata=extract_metadata(
+                        raw_text,
+                        path.name,
+                        {"path": str(path), "extension": path.suffix.lower()},
+                    ),
                 )
             )
     return documents
@@ -50,13 +59,14 @@ def load_uploaded_files(uploaded_files: Iterable[object]) -> list[Document]:
             temp.write(uploaded_file.getvalue())
             temp_path = Path(temp.name)
         try:
-            text = _read_path(temp_path)
+            raw_text = _read_path(temp_path)
+            text = normalize_text(raw_text)
             if text:
                 documents.append(
                     Document(
                         source=name,
-                        text=normalize_text(text),
-                        metadata={"extension": suffix, "origin": "upload"},
+                        text=text,
+                        metadata=extract_metadata(raw_text, name, {"extension": suffix, "origin": "upload"}),
                     )
                 )
         finally:
@@ -125,6 +135,7 @@ def _image_to_text(path: Path) -> str:
     with Image.open(path) as image:
         width, height = image.size
         mode = image.mode
+        ocr_text = _try_ocr(image)
     parent = path.parent.name.lower()
     if "схем" in parent or "scheme" in parent:
         kind = "схема флотации"
@@ -132,8 +143,25 @@ def _image_to_text(path: Path) -> str:
         kind = "регламентный визуальный материал"
     else:
         kind = "загруженное изображение"
-    return (
+    base_text = (
         f"{kind}: {path.name}. Формат {path.suffix.lower()}, размер {width}x{height}, режим {mode}. "
         "Учитывать как визуальный источник ограничений по оборудованию, схеме процесса или регламенту. "
-        "Если на изображении есть подписи, пользователь должен продублировать критичные параметры в текстовом описании."
     )
+    if ocr_text:
+        return f"{base_text} OCR-текст изображения: {ocr_text}"
+    return (
+        f"{base_text} OCR недоступен или не нашел текста; если на изображении есть подписи, "
+        "пользователь должен продублировать критичные параметры в текстовом описании."
+    )
+
+
+def _try_ocr(image: Image.Image) -> str:
+    try:
+        import pytesseract
+    except ImportError:
+        return ""
+    try:
+        text = pytesseract.image_to_string(image, lang=OCR_LANGUAGES)
+    except Exception:
+        return ""
+    return normalize_text(text)

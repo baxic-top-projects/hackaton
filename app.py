@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import asdict
+from datetime import datetime, timezone
+import json
 import logging
 import os
 import subprocess
@@ -39,28 +42,66 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.agentic_pipeline import AgenticResult, run_agentic_factory
-from src.exporters import hypotheses_to_frame, hypotheses_to_json, hypotheses_to_markdown
+from src.exporters import (
+    hypotheses_to_docx,
+    hypotheses_to_frame,
+    hypotheses_to_json,
+    hypotheses_to_markdown,
+    hypotheses_to_pdf,
+)
 from src.graphing import build_relation_graph, graph_to_plotly_data
 from src.ingestion import chunk_documents, load_documents_from_paths, load_uploaded_files
 from src.models import ResearchBrief
 from src.retrieval import KnowledgeIndex
+from src.trackers import configured_trackers, create_jira_issue, create_youtrack_issue
 from src.yandex_ai import generate_expert_summary, is_yandex_configured
 
 
 SAMPLE_DIR = Path("data/sample_knowledge")
+FEEDBACK_PATH = Path("data/feedback.json")
 
 
 load_dotenv()
+
+
+def _check_ui_access() -> bool:
+    expected = os.getenv("APP_AUTH_TOKEN")
+    if not expected:
+        st.session_state.setdefault("role", "admin")
+        return True
+    provided = st.sidebar.text_input("Access token", type="password")
+    if provided == expected:
+        st.session_state.setdefault("role", "expert")
+        return True
+    st.warning("Введите access token для локального контура НИИ.")
+    return False
+
+
+def _render_role_selector() -> None:
+    role = st.selectbox(
+        "Роль",
+        ["researcher", "expert", "viewer", "admin"],
+        index=["researcher", "expert", "viewer", "admin"].index(st.session_state.get("role", "researcher")),
+        help="viewer только смотрит отчеты; expert/admin могут сохранять feedback и создавать задачи.",
+    )
+    st.session_state["role"] = role
+
+
+def _can_edit() -> bool:
+    return st.session_state.get("role") in {"expert", "admin"}
 
 
 def main() -> None:
     st.set_page_config(page_title="Фабрика гипотез", page_icon="H", layout="wide")
     st.title("Фабрика гипотез")
     st.caption("Гибридная агентная архитектура: GraphRAG + Long-Context LLM + расчетные калькуляторы")
+    if not _check_ui_access():
+        return
 
     use_yandex = is_yandex_configured()
 
     with st.sidebar:
+        _render_role_selector()
         st.header("Входные данные")
         target = st.text_area(
             "Целевое свойство или технологическая проблема",
@@ -184,6 +225,7 @@ def _render_saved_result(saved: dict) -> None:
         f"Источников: {saved['document_count']}. Фрагментов: {saved['chunk_count']}."
     )
     _render_source_types(saved.get("source_types", {}), saved.get("source_inventory", []))
+    _render_case_requirements_match()
     _render_yandex_summary(saved.get("yandex_summary"), saved.get("yandex_error"))
     _render_agent_trace(result)
     _render_graph_context(result)
@@ -207,13 +249,13 @@ def _source_type_counts(documents) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def _source_inventory(documents) -> list[dict[str, str]]:
+def _source_inventory(documents) -> list[dict]:
     inventory = []
     for document in documents:
         extension = str(document.metadata.get("extension", "")).lower().lstrip(".")
         if not extension:
             extension = Path(document.source).suffix.lower().lstrip(".") or "unknown"
-        inventory.append({"source": document.source, "extension": extension})
+        inventory.append({"source": document.source, "extension": extension, "metadata": document.metadata})
     return sorted(inventory, key=lambda item: (item["extension"], item["source"]))
 
 
@@ -242,7 +284,11 @@ def _render_all_sources(source_inventory: list[dict[str, str]]) -> None:
     st.subheader("Все загруженные источники")
     with st.expander(f"Показать все источники ({len(source_inventory)})", expanded=False):
         for item in source_inventory:
-            st.write(f"- {item['source']} · тип: {item['extension']}")
+            metadata = item.get("metadata") or {}
+            dates = ", ".join(metadata.get("dates", [])[:2])
+            authors = ", ".join(metadata.get("authors", [])[:2])
+            details = " · ".join(value for value in [f"даты: {dates}" if dates else "", f"авторы: {authors}" if authors else ""] if value)
+            st.write(f"- {item['source']} · тип: {item['extension']}" + (f" · {details}" if details else ""))
 
 
 def _render_requirements_match() -> None:
@@ -251,11 +297,27 @@ def _render_requirements_match() -> None:
     col1.metric("GraphRAG", "сущности + связи")
     col2.metric("LLM", "long-context")
     col3.metric("Калькуляторы", "правила + физика")
-    col4.metric("Экспорт", "JSON/CSV/MD")
+    col4.metric("Интеграция", "API + trackers")
     st.write(
         "Система принимает цель, ограничения и базу знаний, строит граф материалов, процессов, свойств и источников, "
         "расширяет поиск через GraphRAG, проверяет гипотезы расчетными агентами и передает полный контекст в YandexGPT."
     )
+
+
+def _render_case_requirements_match() -> None:
+    st.subheader("Соответствие требованиям кейса")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Интерпретируемость", "источники + GraphRAG")
+    c2.metric("Проверяемость", "план эксперимента")
+    c3.metric("Экспертная настройка", "веса + feedback")
+    c4.metric("Экспорт/API", "CSV/JSON/PDF/API")
+    with st.expander("Что закрыто"):
+        st.write("- Конкретные проверяемые гипотезы с механизмом влияния.")
+        st.write("- Обоснование через цитаты источников и связи графа.")
+        st.write("- Ранжирование по новизне, реализуемости, эффекту, риску и уверенности.")
+        st.write("- Расчетные проверки и прогнозный диапазон KPI-эффекта.")
+        st.write("- Экспертная обратная связь влияет на следующие ранжирования.")
+        st.write("- HTTP API `/api/generate`, экспорт графа GraphML/JSON, Jira/YouTrack при наличии токенов.")
 
 
 def _render_rank_table(hypotheses) -> None:
@@ -302,18 +364,32 @@ def _render_agent_trace(result: AgenticResult) -> None:
 def _render_graph_context(result: AgenticResult) -> None:
     st.subheader("GraphRAG контекст")
     stats = result.graph_index.stats()
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Узлы", stats["nodes"])
     c2.metric("Связи", stats["edges"])
     c3.metric("Материалы", stats["materials"])
     c4.metric("Процессы", stats["processes"])
     c5.metric("Свойства", stats["properties"])
+    c6.metric("Параметры", stats.get("parameters", 0))
     if result.graph_context.related_terms:
         st.caption("Связанные узлы: " + ", ".join(result.graph_context.related_terms[:10]))
     if result.graph_context.graph_path:
         with st.expander("Объяснимые пути в графе"):
             for path in result.graph_context.graph_path:
                 st.write(f"- {path}")
+    graph_files = getattr(result, "graph_files", {})
+    if graph_files:
+        with st.expander("Персистентный граф знаний"):
+            for kind, path in graph_files.items():
+                graph_path = Path(path)
+                if graph_path.exists():
+                    st.download_button(
+                        f"Скачать {kind.upper()}",
+                        data=graph_path.read_bytes(),
+                        file_name=graph_path.name,
+                        mime="application/json" if kind == "json" else "application/xml",
+                        key=f"graph_download_{kind}",
+                    )
 
 
 def _render_graph(hypotheses) -> None:
@@ -355,6 +431,7 @@ def _render_cards(hypotheses) -> None:
             st.write(hypothesis.statement)
             st.markdown(f"**Механизм:** {hypothesis.mechanism}.")
             st.markdown(f"**Обоснование:** {hypothesis.rationale}")
+            st.caption(_novelty_explanation(hypothesis))
 
             c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("Новизна", f"{hypothesis.novelty:.2f}")
@@ -383,11 +460,14 @@ def _render_cards(hypotheses) -> None:
                 st.caption(f"{item.source} · тип: {source_type} · релевантность {item.score:.3f}")
                 st.write(item.quote)
 
+            _render_feedback_controls(idx, hypothesis)
+            _render_tracker_controls(idx, hypothesis)
+
 
 def _render_exports(hypotheses, brief: ResearchBrief) -> None:
     st.subheader("Экспорт")
     frame = hypotheses_to_frame(hypotheses)
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.download_button(
         "CSV для таск-трекера",
         data=frame.to_csv(index=False).encode("utf-8-sig"),
@@ -409,6 +489,100 @@ def _render_exports(hypotheses, brief: ResearchBrief) -> None:
         mime="text/markdown",
         use_container_width=True,
     )
+    col4.download_button(
+        "DOCX-отчет",
+        data=hypotheses_to_docx(hypotheses, brief),
+        file_name="hypotheses_report.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        use_container_width=True,
+    )
+    col5.download_button(
+        "PDF-отчет",
+        data=hypotheses_to_pdf(hypotheses, brief),
+        file_name="hypotheses_report.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+    )
+
+
+def _novelty_explanation(hypothesis) -> str:
+    source_count = len({item.source for item in hypothesis.evidence})
+    avg_relevance = sum(item.score for item in hypothesis.evidence) / max(len(hypothesis.evidence), 1)
+    return (
+        f"Новизна {hypothesis.novelty:.2f}: гипотеза сопоставлена с {source_count} источниками, "
+        f"средняя похожесть evidence {avg_relevance:.3f}. Чем ниже прямое совпадение и выше механизм/эффект, "
+        "тем выше приоритет для экспертной проверки."
+    )
+
+
+def _render_feedback_controls(rank: int, hypothesis) -> None:
+    st.markdown("**Экспертная оценка**")
+    if not _can_edit():
+        st.caption("Текущая роль может просматривать feedback, но не сохранять новые оценки.")
+        return
+    col1, col2, col3 = st.columns(3)
+    if col1.button("Подтверждена", key=f"feedback_ok_{rank}"):
+        _save_feedback(hypothesis, "confirmed")
+        st.success("Оценка сохранена: подтверждена")
+    if col2.button("Отклонена", key=f"feedback_bad_{rank}"):
+        _save_feedback(hypothesis, "rejected")
+        st.warning("Оценка сохранена: отклонена")
+    if col3.button("На проверку", key=f"feedback_test_{rank}"):
+        _save_feedback(hypothesis, "needs_validation")
+        st.info("Оценка сохранена: на проверку")
+
+
+def _render_tracker_controls(rank: int, hypothesis) -> None:
+    trackers = configured_trackers()
+    st.markdown("**Интеграция с таск-трекером**")
+    if not _can_edit():
+        st.caption("Создание задач доступно ролям expert/admin.")
+        return
+    col1, col2 = st.columns(2)
+    if col1.button("Создать Jira task", key=f"jira_task_{rank}", disabled=not trackers["jira"]):
+        try:
+            url = create_jira_issue(hypothesis)
+            st.success(f"Jira задача создана: {url}")
+        except Exception as exc:
+            st.error(f"Не удалось создать Jira задачу: {exc}")
+    if col2.button("Создать YouTrack task", key=f"youtrack_task_{rank}", disabled=not trackers["youtrack"]):
+        try:
+            url = create_youtrack_issue(hypothesis)
+            st.success(f"YouTrack задача создана: {url}")
+        except Exception as exc:
+            st.error(f"Не удалось создать YouTrack задачу: {exc}")
+    if not any(trackers.values()):
+        st.caption("Для прямой отправки задач задайте Jira или YouTrack переменные в `.env`.")
+
+
+def _save_feedback(hypothesis, status: str) -> None:
+    FEEDBACK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    existing = []
+    if FEEDBACK_PATH.exists():
+        try:
+            existing = json.loads(FEEDBACK_PATH.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing = []
+    existing.append(
+        {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+            "title": hypothesis.title,
+            "statement": hypothesis.statement,
+            "tags": hypothesis.tags,
+            "scores": {
+                "total": hypothesis.total_score,
+                "novelty": hypothesis.novelty,
+                "feasibility": hypothesis.feasibility,
+                "expected_value": hypothesis.expected_value,
+                "risk": hypothesis.risk,
+                "confidence": hypothesis.confidence,
+            },
+            "sources": sorted({item.source for item in hypothesis.evidence}),
+            "calculations": [asdict(item) for item in hypothesis.calculations],
+        }
+    )
+    FEEDBACK_PATH.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

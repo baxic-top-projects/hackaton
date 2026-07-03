@@ -3,9 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from .calculators import run_calculators
+from .feedback import apply_feedback_reranking
 from .graph_rag import GraphContext, GraphRAGIndex
+from .graph_storage import persist_graph
 from .hypothesis_engine import generate_hypotheses
 from .models import Chunk, Hypothesis, ResearchBrief
+from .novelty import apply_external_novelty_check, novelty_check_enabled
 from .retrieval import KnowledgeIndex
 
 
@@ -23,6 +26,7 @@ class AgenticResult:
     graph_context: GraphContext
     steps: list[AgentStep]
     long_context: str
+    graph_files: dict[str, str]
 
 
 def run_agentic_factory(
@@ -35,6 +39,7 @@ def run_agentic_factory(
         AgentStep("IngestionAgent", "ok", f"Подготовлено фрагментов знаний: {len(chunks)}"),
     ]
     graph_index = GraphRAGIndex.build(chunks)
+    graph_files = persist_graph(graph_index)
     graph_context = graph_index.retrieve(_brief_query(brief), text_index, limit=8)
     stats = graph_index.stats()
     steps.append(
@@ -43,13 +48,21 @@ def run_agentic_factory(
             "ok",
             (
                 f"Граф: {stats['nodes']} узлов, {stats['edges']} связей; "
-                f"связанные термины: {', '.join(graph_context.related_terms[:6]) or 'не найдены'}"
+                f"связанные термины: {', '.join(graph_context.related_terms[:6]) or 'не найдены'}; "
+                f"сохранен: {graph_files.get('json')}"
             ),
         )
     )
 
     hypotheses = generate_hypotheses(brief, text_index, limit=limit)
     enriched = [_enrich_hypothesis(item, brief, graph_context) for item in hypotheses]
+    if novelty_check_enabled():
+        enriched = apply_external_novelty_check(enriched)
+        steps.append(AgentStep("NoveltyAgent", "ok", "Проверка похожих публикаций и патентов выполнена."))
+    reranked = apply_feedback_reranking(enriched)
+    if reranked != enriched:
+        steps.append(AgentStep("FeedbackAgent", "ok", "Ранжирование скорректировано по экспертной истории."))
+    enriched = reranked
     steps.append(AgentStep("HypothesisAgent", "ok", f"Сгенерировано гипотез: {len(enriched)}"))
     steps.append(
         AgentStep(
@@ -72,6 +85,7 @@ def run_agentic_factory(
         graph_context=graph_context,
         steps=steps,
         long_context=long_context,
+        graph_files=graph_files,
     )
 
 

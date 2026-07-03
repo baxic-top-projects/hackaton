@@ -6,4 +6,7 @@ venv/
 __pycache__/
 *.py[cod]
 .streamlit/secrets.toml
+data/feedback.json
+data/novelty_cache.json
+data/graph_store/
 /data/case_yandex

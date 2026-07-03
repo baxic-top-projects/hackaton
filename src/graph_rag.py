@@ -16,6 +16,26 @@ ENTITY_TERMS = {
     **{term: "property" for term in PROPERTIES},
 }
 
+PARAMETER_PATTERNS = {
+    "temperature": r"\b\d{2,4}\s?(?:°C|C|℃)\b",
+    "percent": r"\b\d+(?:[.,]\d+)?\s?%",
+    "particle_size": r"(?:[+-]\s?\d+\s?(?:мкм|mm|мм)|\b\d+\s?(?:мкм|mm|мм)\b)",
+    "ph": r"\bpH\s?\d+(?:[.,]\d+)?\b",
+    "mass": r"\b\d+(?:[.,]\d+)?\s?(?:т|тонн|kg|кг)\b",
+}
+
+CHEMICAL_SYMBOLS = {
+    "Ni": "material",
+    "Cu": "material",
+    "Co": "material",
+    "Fe": "material",
+    "S": "material",
+    "Pt": "material",
+    "Pd": "material",
+    "Au": "material",
+    "Ag": "material",
+}
+
 
 @dataclass(frozen=True)
 class GraphContext:
@@ -43,7 +63,7 @@ class GraphRAGIndex:
             terms = extract_terms(chunk.text)
             for term in terms:
                 term_node = f"term:{term}"
-                graph.add_node(term_node, kind=ENTITY_TERMS[term], label=term)
+                graph.add_node(term_node, kind=_term_kind(term), label=term)
                 graph.add_edge(chunk_node, term_node, relation="mentions", weight=1.0)
             for left, right in _pairs(terms):
                 graph.add_edge(f"term:{left}", f"term:{right}", relation="co_occurs", weight=0.6)
@@ -66,6 +86,7 @@ class GraphRAGIndex:
             "materials": _count_kind(self.graph, "material"),
             "processes": _count_kind(self.graph, "process"),
             "properties": _count_kind(self.graph, "property"),
+            "parameters": _count_kind(self.graph, "parameter"),
         }
 
     def _related_terms(self, terms: list[str], max_terms: int) -> list[str]:
@@ -112,7 +133,28 @@ def extract_terms(text: str) -> list[str]:
     for term in ENTITY_TERMS:
         if re.search(rf"\b{re.escape(term)}\b", text_lower, flags=re.IGNORECASE):
             found.append(term)
-    return found
+    for symbol in CHEMICAL_SYMBOLS:
+        if re.search(rf"\b{re.escape(symbol)}\b", text, flags=re.IGNORECASE):
+            found.append(symbol)
+    for kind, pattern in PARAMETER_PATTERNS.items():
+        for match in re.findall(pattern, text, flags=re.IGNORECASE):
+            value = normalize_parameter(match)
+            found.append(f"{kind}:{value}")
+    return list(dict.fromkeys(found))
+
+
+def normalize_parameter(value: str) -> str:
+    return re.sub(r"\s+", "", value).replace(",", ".")
+
+
+def _term_kind(term: str) -> str:
+    if term in ENTITY_TERMS:
+        return ENTITY_TERMS[term]
+    if term in CHEMICAL_SYMBOLS:
+        return CHEMICAL_SYMBOLS[term]
+    if ":" in term:
+        return "parameter"
+    return "term"
 
 
 def _pairs(items: list[str]) -> list[tuple[str, str]]:

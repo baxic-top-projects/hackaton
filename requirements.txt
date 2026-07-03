@@ -9,3 +9,8 @@ openpyxl
 requests
 python-dotenv
 pillow
+pytesseract
+reportlab
+fastapi
+uvicorn
+neo4j
