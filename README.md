@@ -163,18 +163,20 @@ YandexGPT является обязательным long-context LLM слоем 
 ```powershell
 $env:YANDEX_API_KEY="ваш_api_ключ"
 $env:YANDEX_FOLDER_ID="ваш_folder_id"
-$env:YANDEX_MODEL="yandexgpt-lite/latest"
+$env:YANDEX_MODEL="aliceai-llm"
 $env:YANDEX_TIMEOUT_SECONDS="15"
 python app.py
 ```
 
 Без `YANDEX_API_KEY` и `YANDEX_FOLDER_ID` генерация в UI блокируется, а API возвращает `503`. YandexGPT получает уже структурированный long-context пакет поверх GraphRAG-контекста, гипотез, counterfactual, predictive KPI и расчетных проверок.
 
-Если контейнер пишет `Failed to resolve 'llm.api.cloud.yandex.net'`, это DNS/сетевой сбой контейнера, а не ошибка модели. В `docker-compose.yml` для app/API заданы DNS `1.1.1.1` и `8.8.8.8`; после изменения выполните:
+Интеграция использует OpenAI-compatible endpoint Yandex AI Studio: `https://ai.api.cloud.yandex.net/v1/responses`.
+
+Если контейнер пишет `Failed to resolve 'ai.api.cloud.yandex.net'`, это DNS/сетевой сбой контейнера, а не ошибка модели. В `docker-compose.yml` для app/API заданы DNS `1.1.1.1` и `8.8.8.8`; после изменения выполните:
 
 ```bash
 docker compose up -d --build
-docker exec hypothesis-factory python -c "import socket; print(socket.gethostbyname('llm.api.cloud.yandex.net'))"
+docker exec hypothesis-factory python -c "import socket; print(socket.gethostbyname('ai.api.cloud.yandex.net'))"
 ```
 
 ## Интеграции
