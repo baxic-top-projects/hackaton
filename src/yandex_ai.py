@@ -56,6 +56,13 @@ def generate_expert_summary(
         json=payload,
         timeout=timeout,
     )
+    if response.status_code in {401, 403}:
+        detail = response.text[:800] if response.text else "empty response"
+        raise RuntimeError(
+            "YandexGPT запретил запрос. Проверьте, что API key активен, относится к нужному облаку, "
+            "имеет доступ к Yandex Foundation Models, а YANDEX_FOLDER_ID совпадает с каталогом ключа. "
+            f"HTTP {response.status_code}: {detail}"
+        )
     response.raise_for_status()
     data = response.json()
     alternatives = data.get("result", {}).get("alternatives", [])
