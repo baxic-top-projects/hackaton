@@ -21,17 +21,36 @@ app = FastAPI(title="Hypothesis Factory API", version="1.0.0")
 
 
 class ApiDocument(BaseModel):
-    source: str = "api-document.txt"
-    text: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    source: str = Field(default="api-document.txt", description="Название источника: файл, отчет, статья, таблица или патент.")
+    text: str = Field(
+        description=(
+            "Извлеченный текст документа. Передавайте сюда содержимое отчета, статьи, таблицы, "
+            "OCR-результат изображения или краткое описание источника."
+        )
+    )
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Необязательные метаданные: дата, автор, тип источника, условия эксперимента.")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "source": "flotation_report.txt",
+                "text": (
+                    "Отчет по хвостам флотации: повышенные потери Ni/Cu наблюдаются в классе "
+                    "+71 мкм. Для проверки предлагаются доизмельчение, контроль pH 8.5-9.5 "
+                    "и корректировка реагентного режима."
+                ),
+                "metadata": {"date": "2024", "type": "lab_report"},
+            }
+        }
+    }
 
 
 class GenerateRequest(BaseModel):
-    target: str
-    constraints: str = ""
-    available_materials: str = ""
-    equipment: str = ""
-    budget: str = ""
+    target: str = Field(description="Цель или технологическая проблема, под которую нужно сгенерировать гипотезы.")
+    constraints: str = Field(default="", description="Ограничения: сроки, бюджет, нормативы, доступные режимы, запреты.")
+    available_materials: str = Field(default="", description="Доступное сырье, материалы, реагенты или потоки.")
+    equipment: str = Field(default="", description="Доступное оборудование для проверки гипотез.")
+    budget: str = Field(default="", description="Бюджетные и временные ограничения.")
     weights: dict[str, float] = Field(
         default_factory=lambda: {
             "novelty": 0.2,
@@ -42,7 +61,44 @@ class GenerateRequest(BaseModel):
         }
     )
     limit: int = Field(default=6, ge=1, le=12)
-    documents: list[ApiDocument] = Field(default_factory=list)
+    documents: list[ApiDocument] = Field(
+        default_factory=list,
+        description=(
+            "Переданные документы в текстовом виде. Если список пустой, API использует встроенную demo-базу знаний."
+        ),
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "target": "снизить потери Ni/Cu в хвостах флотации",
+                "constraints": "лабораторная проверка до 2 недель; без капитальных изменений схемы",
+                "available_materials": "хвосты флотации, известь, собиратель, вспениватель",
+                "equipment": "флотомашина, мельница, классификатор, pH-метр",
+                "budget": "пилотный лабораторный скрининг",
+                "limit": 3,
+                "documents": [
+                    {
+                        "source": "flotation_report.txt",
+                        "text": (
+                            "Отчет по хвостам флотации: повышенные потери Ni/Cu наблюдаются "
+                            "в классе +71 мкм. В пробах указаны pH 8.5-9.5, реагентный режим "
+                            "и необходимость проверки доизмельчения перед перечисткой."
+                        ),
+                        "metadata": {"type": "lab_report", "year": "2024"},
+                    },
+                    {
+                        "source": "scheme_ocr.txt",
+                        "text": (
+                            "OCR схемы: основная флотация, перечистка, хвостовой поток, "
+                            "контроль крупности и pH."
+                        ),
+                        "metadata": {"type": "image_ocr"},
+                    },
+                ],
+            }
+        }
+    }
 
 
 @app.get("/health")
