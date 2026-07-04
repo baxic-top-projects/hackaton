@@ -6,6 +6,9 @@ services:
     container_name: hypothesis-factory
     env_file:
       - .env
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     ports:
       - "8502:8502"
     volumes:
@@ -21,6 +24,9 @@ services:
     container_name: hypothesis-api
     env_file:
       - .env
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     command: ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8503:8000"

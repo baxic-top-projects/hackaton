@@ -170,6 +170,13 @@ python app.py
 
 Без `YANDEX_API_KEY` и `YANDEX_FOLDER_ID` генерация в UI блокируется, а API возвращает `503`. YandexGPT получает уже структурированный long-context пакет поверх GraphRAG-контекста, гипотез, counterfactual, predictive KPI и расчетных проверок.
 
+Если контейнер пишет `Failed to resolve 'llm.api.cloud.yandex.net'`, это DNS/сетевой сбой контейнера, а не ошибка модели. В `docker-compose.yml` для app/API заданы DNS `1.1.1.1` и `8.8.8.8`; после изменения выполните:
+
+```bash
+docker compose up -d --build
+docker exec hypothesis-factory python -c "import socket; print(socket.gethostbyname('llm.api.cloud.yandex.net'))"
+```
+
 ## Интеграции
 
 Для прямого создания задач задайте переменные в `.env`.
