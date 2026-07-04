@@ -13,6 +13,7 @@ from .ingestion import chunk_documents, load_documents_from_paths, normalize_tex
 from .metadata import extract_metadata
 from .models import Document, ResearchBrief
 from .retrieval import KnowledgeIndex
+from .yandex_ai import generate_expert_summary, is_yandex_configured
 
 
 SAMPLE_DIR = Path("data/sample_knowledge")
@@ -117,6 +118,8 @@ def require_api_role(x_api_key: str | None = Header(default=None)) -> str:
 
 @app.post("/api/generate")
 def generate(request: GenerateRequest, role: str = Depends(require_api_role)) -> dict[str, Any]:
+    if not is_yandex_configured():
+        raise HTTPException(status_code=503, detail="YandexGPT is required: configure YANDEX_API_KEY and YANDEX_FOLDER_ID.")
     brief = ResearchBrief(
         target=request.target,
         constraints=request.constraints,
@@ -133,9 +136,11 @@ def generate(request: GenerateRequest, role: str = Depends(require_api_role)) ->
         raise HTTPException(status_code=400, detail="No indexable knowledge chunks were provided.")
     index = KnowledgeIndex.build(chunks)
     result = run_agentic_factory(brief, index, chunks, limit=request.limit)
+    yandex_summary = generate_expert_summary(brief, result.hypotheses, long_context=result.long_context)
     return {
         "brief": asdict(brief),
         "hypotheses": [asdict(hypothesis) for hypothesis in result.hypotheses],
+        "yandex_summary": yandex_summary,
         "steps": [asdict(step) for step in result.steps],
         "graph_stats": result.graph_index.stats(),
         "graph_paths": result.graph_files,

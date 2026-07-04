@@ -102,7 +102,7 @@ def main() -> None:
     if not _check_ui_access():
         return
 
-    use_yandex = is_yandex_configured()
+    yandex_ready = is_yandex_configured()
 
     with st.sidebar:
         _render_role_selector()
@@ -143,11 +143,11 @@ def main() -> None:
             accept_multiple_files=True,
         )
         limit = st.slider("Количество гипотез", 3, 12, 6)
-        if use_yandex:
-            st.caption("YandexGPT используется автоматически для экспертной сводки.")
+        if yandex_ready:
+            st.caption("YandexGPT является обязательным long-context LLM слоем и используется автоматически.")
         else:
-            st.caption("Для LLM-режима задайте YANDEX_API_KEY и YANDEX_FOLDER_ID.")
-        run = st.button("Сгенерировать гипотезы", type="primary", use_container_width=True)
+            st.error("YandexGPT обязателен: задайте YANDEX_API_KEY и YANDEX_FOLDER_ID.")
+        run = st.button("Сгенерировать гипотезы", type="primary", use_container_width=True, disabled=not yandex_ready)
 
     weights = _normalize_weights(
         {
@@ -168,7 +168,7 @@ def main() -> None:
     )
 
     if run:
-        _generate_and_store_result(brief, uploaded_files, limit, use_yandex)
+        _generate_and_store_result(brief, uploaded_files, limit, True)
 
     saved = st.session_state.get("last_result")
     if not saved:
