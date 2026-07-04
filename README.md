@@ -24,8 +24,6 @@ Streamlit-прототип для задачи Норникель AI Hackathon: 
 - Сохраняет экспертную обратную связь по гипотезам в `data/feedback.json`.
 - Предоставляет HTTP API `/api/generate`, role-based token auth и отправку гипотез в Jira/YouTrack.
 
-## Быстрый запуск
-
 ## Публичное демо
 
 - UI: `https://hackaton.baxic.ru`
@@ -45,6 +43,8 @@ APP_TOKENS=viewer-token:viewer,expert-token:expert,admin-token:admin
 API_TOKENS=reader-token:viewer,research-token:researcher,admin-token:admin
 ```
 
+Для передачи жюри используйте отдельный demo-token с ролью `expert` для UI и `researcher` для API. Не публикуйте реальные токены Jira, YouTrack, Yandex AI Studio и Neo4j в репозитории.
+
 Пример:
 
 ```bash
@@ -52,6 +52,56 @@ curl -X POST https://hypothesisapi.baxic.ru/api/generate \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <API_AUTH_TOKEN>" \
   -d '{"target":"снизить потери Ni в хвостах","limit":3}'
+```
+
+## API Reference
+
+Базовый endpoint генерации:
+
+```text
+POST /api/generate
+```
+
+Поля запроса:
+
+- `target` — целевое свойство или технологическая проблема.
+- `constraints` — ограничения по сырью, бюджету, оборудованию, нормативам.
+- `available_materials` — доступные материалы или сырье.
+- `equipment` — доступное лабораторное/производственное оборудование.
+- `budget` — ограничения по срокам и бюджету.
+- `weights` — веса критериев `novelty`, `feasibility`, `expected_value`, `risk`, `confidence`.
+- `limit` — количество гипотез, от `1` до `12`.
+- `documents` — массив текстовых документов `{source, text, metadata}`.
+
+Минимальный request body:
+
+```json
+{
+  "target": "снизить потери Ni в хвостах",
+  "constraints": "лабораторная проверка за 2 недели",
+  "limit": 3,
+  "documents": [
+    {
+      "source": "case.txt",
+      "text": "tailings flotation pH recovery losses"
+    }
+  ]
+}
+```
+
+Ответ содержит:
+
+- `brief` — нормализованный исследовательский запрос.
+- `hypotheses` — ранжированный список гипотез с источниками, score, рисками, планом проверки и расчетами.
+- `steps` — трассировка агентного пайплайна.
+- `graph_stats` — статистика GraphRAG-графа.
+- `graph_paths` — пути к `JSON`, `GraphML`, `RDF/Turtle` и статус Neo4j sync.
+- `api_role` — роль токена, с которым выполнен запрос.
+
+Если задан `API_AUTH_TOKEN` или `API_TOKENS`, передавайте:
+
+```http
+X-API-Key: <token>
 ```
 
 ## Локальный запуск
@@ -159,6 +209,16 @@ NEO4J_DATABASE=neo4j
 3. Нажмите "Сгенерировать гипотезы".
 4. Покажите жюри GraphRAG-метрики, таблицу ранжирования, карточки гипотез, цитаты источников, калькуляторы и дорожную карту проверки.
 5. Скачайте PDF/DOCX/Markdown-отчет или JSON как пример интеграции с внешними системами.
+
+## Видео-демо за 5 минут
+
+1. Показать публичный UI `https://hackaton.baxic.ru` и вход по `APP_AUTH_TOKEN` или роли `expert`.
+2. Загрузить документы/таблицы/изображения и объяснить, что включены OCR, metadata extraction и мультиязычная нормализация.
+3. Нажать "Сгенерировать гипотезы" и показать agent trace: Ingestion, GraphRAG, Counterfactual, Predictive KPI, Novelty, Feedback, LLM.
+4. Открыть карточку гипотезы: формулировка, механизм, источники, риски, расчеты, counterfactual и план проверки.
+5. Показать граф связей и экспорт `PDF/DOCX/JSON`.
+6. Открыть `https://hypothesisapi.baxic.ru/docs`, выполнить `POST /api/generate` с `X-API-Key`.
+7. Показать интеграцию с Jira/YouTrack как создание задачи из гипотезы или объяснить, что токены задаются в `.env`.
 
 ## Архитектура
 
