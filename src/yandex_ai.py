@@ -25,7 +25,7 @@ def generate_expert_summary(
     model = os.getenv("YANDEX_MODEL", DEFAULT_MODEL)
     timeout = int(os.getenv("YANDEX_TIMEOUT_SECONDS", "15"))
     if not api_key or not folder_id:
-        return "Yandex AI Studio не настроен: задайте YANDEX_API_KEY и YANDEX_FOLDER_ID."
+        return "Alice AI LLM не настроена: задайте YANDEX_API_KEY и YANDEX_FOLDER_ID."
 
     payload = {
         "model": f"gpt://{folder_id}/{model}",
@@ -46,15 +46,15 @@ def generate_expert_summary(
     if response.status_code in {401, 403}:
         detail = response.text[:800] if response.text else "empty response"
         raise RuntimeError(
-            "YandexGPT запретил запрос. Проверьте, что API key активен, относится к нужному облаку, "
-            "имеет доступ к Yandex Foundation Models, а YANDEX_FOLDER_ID совпадает с каталогом ключа. "
+            "Alice AI LLM запретила запрос. Проверьте, что API key активен, относится к нужному облаку, "
+            "имеет доступ к Alice AI LLM / Yandex AI Studio, а YANDEX_FOLDER_ID совпадает с каталогом ключа. "
             f"HTTP {response.status_code}: {detail}"
         )
     response.raise_for_status()
     data = response.json()
     text = _extract_responses_text(data)
     if not text:
-        return "YandexGPT не вернул текстовый ответ."
+        return "Alice AI LLM не вернула текстовый ответ."
     return text
 
 

@@ -119,7 +119,7 @@ def require_api_role(x_api_key: str | None = Header(default=None)) -> str:
 @app.post("/api/generate")
 def generate(request: GenerateRequest, role: str = Depends(require_api_role)) -> dict[str, Any]:
     if not is_yandex_configured():
-        raise HTTPException(status_code=503, detail="YandexGPT is required: configure YANDEX_API_KEY and YANDEX_FOLDER_ID.")
+        raise HTTPException(status_code=503, detail="Alice AI LLM is required: configure YANDEX_API_KEY and YANDEX_FOLDER_ID.")
     brief = ResearchBrief(
         target=request.target,
         constraints=request.constraints,

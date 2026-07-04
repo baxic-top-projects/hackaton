@@ -91,7 +91,7 @@ def run_agentic_factory(
         AgentStep(
             "LongContextLLMAgent",
             "ready",
-            f"Подготовлен контекст для YandexGPT: {len(long_context)} символов",
+            f"Подготовлен контекст для Alice AI LLM: {len(long_context)} символов",
         )
     )
     return AgenticResult(

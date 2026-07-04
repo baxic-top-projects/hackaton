@@ -1,13 +1,13 @@
 # Фабрика гипотез
 
-Streamlit-прототип для задачи Норникель AI Hackathon: гибридная система на стыке GraphRAG, обязательного Long-Context LLM слоя YandexGPT и внешних символьных/физических калькуляторов.
+Streamlit-прототип для задачи Норникель AI Hackathon: гибридная система на стыке GraphRAG, обязательного Long-Context LLM слоя Alice AI LLM и внешних символьных/физических калькуляторов.
 
 ## Что делает приложение
 
 - Принимает цель/KPI, ограничения, доступное сырье, оборудование и веса критериев ранжирования.
 - Загружает базу знаний из `txt`, `md`, `pdf`, `docx`, `csv`, `xlsx`, `png`, `jpg`, `jpeg`, `webp`.
 - Разбивает документы на фрагменты, строит устойчивый hashing retrieval индекс и GraphRAG-граф материалов, процессов, свойств, параметров и источников.
-- Запускает гибридный пайплайн: ingestion, GraphRAG retrieval, генерация гипотез, расчетная валидация и обязательная long-context сводка YandexGPT.
+- Запускает гибридный пайплайн: ingestion, GraphRAG retrieval, генерация гипотез, расчетная валидация и обязательная long-context сводка Alice AI LLM.
 - Генерирует проверяемые гипотезы по шаблонам материаловедения и металлургических процессов.
 - Проверяет гипотезы внешними калькуляторами: стоимость легирования, наличие оборудования, прогноз KPI-эффекта, термоокно, баланс процесса.
 - Выполняет контрфактуальный анализ: baseline, сценарий без ключевого фактора и замена процесса ближайшей альтернативой.
@@ -107,7 +107,7 @@ POST /api/generate
 
 - `brief` — нормализованный исследовательский запрос.
 - `hypotheses` — ранжированный список гипотез с источниками, score, рисками, планом проверки и расчетами.
-- `yandex_summary` — обязательная long-context экспертная сводка YandexGPT по GraphRAG-контексту и расчетам.
+- `yandex_summary` — обязательная long-context экспертная сводка Alice AI LLM по GraphRAG-контексту и расчетам.
 - `steps` — трассировка агентного пайплайна.
 - `graph_stats` — статистика GraphRAG-графа.
 - `graph_paths` — пути к `JSON`, `GraphML`, `RDF/Turtle` и статус Neo4j sync.
@@ -158,7 +158,7 @@ curl -X POST http://localhost:8503/api/generate `
 
 ## Yandex AI Studio
 
-YandexGPT является обязательным long-context LLM слоем решения. Не храните API-ключ в репозитории. Перед запуском задайте переменные окружения:
+Alice AI LLM является обязательным long-context LLM слоем решения. Не храните API-ключ в репозитории. Перед запуском задайте переменные окружения:
 
 ```powershell
 $env:YANDEX_API_KEY="ваш_api_ключ"
@@ -168,7 +168,7 @@ $env:YANDEX_TIMEOUT_SECONDS="15"
 python app.py
 ```
 
-Без `YANDEX_API_KEY` и `YANDEX_FOLDER_ID` генерация в UI блокируется, а API возвращает `503`. YandexGPT получает уже структурированный long-context пакет поверх GraphRAG-контекста, гипотез, counterfactual, predictive KPI и расчетных проверок.
+Без `YANDEX_API_KEY` и `YANDEX_FOLDER_ID` генерация в UI блокируется, а API возвращает `503`. Alice AI LLM получает уже структурированный long-context пакет поверх GraphRAG-контекста, гипотез, counterfactual, predictive KPI и расчетных проверок.
 
 Интеграция использует OpenAI-compatible endpoint Yandex AI Studio: `https://ai.api.cloud.yandex.net/v1/responses`.
 
@@ -263,7 +263,7 @@ flowchart LR
     calculators --> predictive["Predictive KPI model"]
     predictive --> feedback["ML feedback reranking"]
     feedback --> llmContext["Long-context пакет"]
-    llmContext --> yandex["YandexGPT обязательный LLM слой"]
+    llmContext --> yandex["Alice AI LLM обязательный LLM слой"]
     feedback --> cards["Карточки гипотез"]
     cards --> exports["CSV/JSON/Markdown/DOCX/PDF"]
     cards --> trackers["Jira/YouTrack/API"]
@@ -273,7 +273,7 @@ flowchart LR
 
 Решение не просто генерирует текст, а сохраняет трассировку к источникам и промежуточным расчетам: каждая гипотеза содержит цитаты, GraphRAG-обоснование, механизм влияния, расчетные проверки, прогнозный диапазон KPI-эффекта, риски, ресурсы и план проверки. Веса критериев и экспертная обратная связь помогают менять стратегию ранжирования под конкретную лабораторию, бюджет или горизонт проверки.
 
-Базовый GraphRAG/scoring/calculators слой работает локально, а YandexGPT является обязательным long-context экспертным модулем для финальной сводки. Дополнительные внешние слои Crossref/Semantic Scholar/PatentsView, Neo4j и Jira/YouTrack подключаются через `.env`, но не заменяют GraphRAG/scoring/calculators.
+Базовый GraphRAG/scoring/calculators слой работает локально, а Alice AI LLM является обязательным long-context экспертным модулем для финальной сводки. Дополнительные внешние слои Crossref/Semantic Scholar/PatentsView, Neo4j и Jira/YouTrack подключаются через `.env`, но не заменяют GraphRAG/scoring/calculators.
 
 ## Соответствие требованиям кейса
 
@@ -296,7 +296,7 @@ flowchart LR
 
 - Интерпретируемость: каждый шаг виден через agent trace, источники, граф, калькуляторы, novelty и counterfactual.
 - Мультиязычность: OCR `rus+eng+chi_sim`, нормализация английских и китайских терминов в русскую онтологию.
-- Надежность: fallback для пустых и шумных данных, `HashingVectorizer`, локальный базовый GraphRAG/scoring слой и обязательная YandexGPT-сводка при настроенных ключах.
+- Надежность: fallback для пустых и шумных данных, `HashingVectorizer`, локальный базовый GraphRAG/scoring слой и обязательная Alice AI LLM-сводка при настроенных ключах.
 - Производительность: генерация рассчитана на интерактивный режим, без тяжелых моделей в основном цикле.
 - Безопасность: локальный Docker-контур, UI token, API token, role-based access, Neo4j во внутренней сети.
 

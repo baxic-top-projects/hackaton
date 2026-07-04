@@ -144,9 +144,9 @@ def main() -> None:
         )
         limit = st.slider("Количество гипотез", 3, 12, 6)
         if yandex_ready:
-            st.caption("YandexGPT является обязательным long-context LLM слоем и используется автоматически.")
+            st.caption("Alice AI LLM является обязательным long-context LLM слоем и используется автоматически.")
         else:
-            st.error("YandexGPT обязателен: задайте YANDEX_API_KEY и YANDEX_FOLDER_ID.")
+            st.error("Alice AI LLM обязательна: задайте YANDEX_API_KEY и YANDEX_FOLDER_ID.")
         run = st.button("Сгенерировать гипотезы", type="primary", use_container_width=True, disabled=not yandex_ready)
 
     weights = _normalize_weights(
@@ -202,10 +202,10 @@ def _generate_and_store_result(
     yandex_error = None
     if use_yandex:
         try:
-            with st.spinner("Передаю GraphRAG-контекст и расчеты в Yandex AI Studio..."):
+            with st.spinner("Передаю GraphRAG-контекст и расчеты в Alice AI LLM..."):
                 yandex_summary = generate_expert_summary(brief, hypotheses, long_context=result.long_context)
         except Exception as exc:
-            yandex_error = f"YandexGPT недоступен, базовая генерация сохранена: {exc}"
+            yandex_error = f"Alice AI LLM недоступна, базовая генерация сохранена: {exc}"
 
     st.session_state["last_result"] = {
         "brief": brief,
@@ -304,7 +304,7 @@ def _render_requirements_match() -> None:
     col4.metric("Интеграция", "API + trackers")
     st.write(
         "Система принимает цель, ограничения и базу знаний, строит граф материалов, процессов, свойств и источников, "
-        "расширяет поиск через GraphRAG, проверяет гипотезы расчетными агентами и передает полный контекст в YandexGPT."
+        "расширяет поиск через GraphRAG, проверяет гипотезы расчетными агентами и передает полный контекст в Alice AI LLM."
     )
 
 
