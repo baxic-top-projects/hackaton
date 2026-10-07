@@ -22,7 +22,6 @@ Options:
 Environment:
   COMPOSE_K3S_EXTRA_NAMESERVERS   Public DNS for Maildev/SMTP Deployments (default: 8.8.8.8,1.1.1.1)
   COMPOSE_K3S_SKIP_SMTP_DNS       Set to 1 to skip Maildev dnsConfig on the Deployment
-  COMPOSE_K3S_LOCK_WAIT           Seconds to wait for a concurrent deployment (default: 1800)
 EOF
 }
 
@@ -218,11 +217,7 @@ PY
 lock_dir=${COMPOSE_K3S_LOCK_DIR:-${XDG_RUNTIME_DIR:-/tmp}}
 mkdir -p "$lock_dir"
 exec 9>"${lock_dir}/compose-k3s-sync-${kube_project}.lock"
-lock_wait=${COMPOSE_K3S_LOCK_WAIT:-1800}
-if ! flock -n 9; then
-  log "another deployment of $kube_project is running; waiting up to ${lock_wait}s for it to finish"
-  flock -w "$lock_wait" 9 || die "another deployment of $kube_project is still running after ${lock_wait}s"
-fi
+flock -n 9 || die "another deployment of $kube_project is already running"
 
 mapfile -t sync_services < <(
   python3 - "$config_json" "$image_separator" <<'PY'
