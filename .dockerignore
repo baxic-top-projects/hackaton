@@ -1,14 +1,14 @@
-.git
-.env
-.env.*
-!.env.example
-.venv
-venv
-__pycache__
-*.pyc
-.streamlit/secrets.toml
+# Allowlist: the deploy directory on the server accumulates runtime state, so
+# only send what the image needs (keeps the build context small).
+*
+!app.py
+!requirements.txt
+!src
+!data
+!scripts
 data/case_yandex
-.tmp-compose-build
 data/graph_store
 data/feedback.json
 data/novelty_cache.json
+**/__pycache__
+**/*.pyc
