@@ -23,8 +23,9 @@ Options:
 Environment:
   COMPOSE_K3S_EXTRA_NAMESERVERS   Public DNS for Maildev/SMTP Deployments (default: 8.8.8.8,1.1.1.1)
   COMPOSE_K3S_SKIP_SMTP_DNS       Set to 1 to skip Maildev dnsConfig on the Deployment
-  COMPOSE_BAKE                    Passed to docker compose build (default: false)
   COMPOSE_K3S_STRICT_ROLLOUT      Set to 1 to fail when kubectl rollout status fails
+  COMPOSE_BAKE                    Default 0 — avoid compose bake metadata-file races on build
+  TMPDIR                          Default /tmp for compose build temp files
 EOF
 }
 
@@ -314,15 +315,22 @@ if [[ "$skip_build" != true && "$dry_run" != true ]]; then
   log "building Compose project $project_name"
   build_args=()
   [[ "$no_cache" == true ]] && build_args+=(--no-cache)
-  # The bake builder hands buildx a metadata file under $TMPDIR, which goes
-  # missing when buildx sees a different /tmp (e.g. snap Docker), failing the
-  # build after all images were already produced. Some Compose versions ignore
-  # COMPOSE_BAKE, so also point TMPDIR at a project-local directory that both
-  # compose and buildx can see.
-  build_tmp="$project_dir/.tmp-compose-build"
-  mkdir -p "$build_tmp"
-  COMPOSE_BAKE=${COMPOSE_BAKE:-false} TMPDIR="$build_tmp" "${compose[@]}" build "${build_args[@]}"
-  rm -rf "$build_tmp"
+  export TMPDIR="${TMPDIR:-/tmp}"
+  export COMPOSE_BAKE="${COMPOSE_BAKE:-0}"
+  mkdir -p "$TMPDIR"
+  build_services=()
+  for row in "${sync_services[@]}"; do
+    IFS=$'\t' read -r service _ _ _ <<<"$row"
+    build_services+=("$service")
+  done
+  if ((${#build_services[@]} <= 1)); then
+    "${compose[@]}" build "${build_args[@]}"
+  else
+    for service in "${build_services[@]}"; do
+      log "building service $service"
+      "${compose[@]}" build "${build_args[@]}" "$service"
+    done
+  fi
 fi
 
 local_ips=" $(hostname -I 2>/dev/null || true) "
