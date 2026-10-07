@@ -190,7 +190,9 @@ PY
 )
 [[ -n "$kube_project" ]] || die "cannot normalize Compose project name: $project_name"
 
-exec 9>"/var/lock/compose-k3s-sync-${kube_project}.lock"
+lock_dir=${COMPOSE_K3S_LOCK_DIR:-${XDG_RUNTIME_DIR:-/tmp}}
+mkdir -p "$lock_dir"
+exec 9>"${lock_dir}/compose-k3s-sync-${kube_project}.lock"
 flock -n 9 || die "another deployment of $kube_project is already running"
 
 mapfile -t sync_services < <(
@@ -221,27 +223,6 @@ PY
 if [[ "$dry_run" != true ]]; then
   log "removing Compose runtime containers for $project_name"
   "${compose[@]}" down --remove-orphans
-
-  # Fixed container_name values may still be held by containers from another
-  # Compose project (e.g. an older deploy path); they block names and ports.
-  mapfile -t pinned_names < <(
-    python3 - "$config_json" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as stream:
-    config = json.load(stream)
-for service in config["services"].values():
-    if service.get("container_name"):
-        print(service["container_name"])
-PY
-  )
-  for name in "${pinned_names[@]}"; do
-    if docker container inspect "$name" >/dev/null 2>&1; then
-      log "removing leftover container $name"
-      docker rm -f "$name" >/dev/null
-    fi
-  done
 fi
 
 if [[ "$skip_build" != true && "$dry_run" != true ]]; then
