@@ -27,6 +27,8 @@ Environment:
   COMPOSE_BAKE                    Default 0 — avoid compose bake metadata-file races on build
   BUILDX_NO_DEFAULT_ATTESTATIONS  Default 1 — skip provenance attestation (metadata-file flake)
   TMPDIR                          Default /tmp for compose build temp files
+  COMPOSE_K3S_LOCK_WAIT           Seconds to wait for per-project flock (0 = fail immediately)
+  COMPOSE_K3S_CLEAR_ORPHAN_LOCK   Set to 1 to fuser -k stale lock holders after wait (default 1)
 EOF
 }
 
@@ -279,8 +281,31 @@ PY
 
 lock_dir=${COMPOSE_K3S_LOCK_DIR:-${XDG_RUNTIME_DIR:-/tmp}}
 mkdir -p "$lock_dir"
-exec 9>"${lock_dir}/compose-k3s-sync-${kube_project}.lock"
-flock -n 9 || die "another deployment of $kube_project is already running"
+lock_file="${lock_dir}/compose-k3s-sync-${kube_project}.lock"
+exec 9>"$lock_file"
+lock_wait=${COMPOSE_K3S_LOCK_WAIT:-0}
+clear_orphan=${COMPOSE_K3S_CLEAR_ORPHAN_LOCK:-1}
+acquire_deploy_lock() {
+  if flock -n 9; then
+    return 0
+  fi
+  if [[ "$lock_wait" =~ ^[0-9]+$ && "$lock_wait" -gt 0 ]]; then
+    log "deploy lock busy for $kube_project; waiting up to ${lock_wait}s"
+    if flock -w "$lock_wait" 9; then
+      return 0
+    fi
+  fi
+  if [[ "$clear_orphan" == 1 ]] && command -v fuser >/dev/null 2>&1; then
+    log "clearing stale lock holders for $kube_project"
+    fuser -k "$lock_file" 2>/dev/null || true
+    sleep 2
+    if flock -n 9; then
+      return 0
+    fi
+  fi
+  return 1
+}
+acquire_deploy_lock || die "another deployment of $kube_project is already running (or lock wait expired)"
 
 mapfile -t sync_services < <(
   python3 - "$config_json" "$image_separator" <<'PY'
@@ -366,7 +391,6 @@ local_ips=" $(hostname -I 2>/dev/null || true) "
 matched_services=0
 rolled_out=0
 schema_patched=0
-declare -A imported_images=()
 
 for row in "${sync_services[@]}"; do
   IFS=$'\t' read -r service source_image replicas explicit_image <<<"$row"
@@ -437,21 +461,9 @@ for row in "${sync_services[@]}"; do
     pull_policy=IfNotPresent
     log "using registry digest $deployment_image for multi-platform image"
   else
-    existing_ref=$("${k3s_ctr[@]}" -n k8s.io images ls -q \
-      "name==docker.io/${immutable_image}" 2>/dev/null || true)
-    if [[ -n "$existing_ref" ]]; then
-      log "$immutable_image already present in k3s containerd; skipping import"
-    elif [[ -n "${imported_images[$image_id]:-}" ]]; then
-      # Services built from the same image share one import (save/import is slow).
-      log "tagging ${imported_images[$image_id]} as $immutable_image (same image)"
-      "${k3s_ctr[@]}" -n k8s.io images tag --force \
-        "docker.io/${imported_images[$image_id]}" "docker.io/${immutable_image}" >/dev/null
-    else
-      log "importing $source_image as $immutable_image"
-      docker image tag "$source_image" "$immutable_image"
-      docker image save "$immutable_image" | "${k3s_ctr[@]}" -n k8s.io images import -
-    fi
-    imported_images[$image_id]=$immutable_image
+    log "importing $source_image as $immutable_image"
+    docker image tag "$source_image" "$immutable_image"
+    docker image save "$immutable_image" | "${k3s_ctr[@]}" -n k8s.io images import -
   fi
 
   container=$("${kube[@]}" get deployment "$deployment" -n "$namespace" \
