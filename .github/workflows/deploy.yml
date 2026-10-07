@@ -71,6 +71,5 @@ jobs:
           script_stop: true
           command_timeout: 60m
           script: |
-            sudo install -m 755 "$DEPLOY_PATH/scripts/compose-k3s-sync.sh" /usr/local/sbin/compose-k3s-sync
-            sudo -n /usr/local/sbin/compose-k3s-sync \
+            bash "$DEPLOY_PATH/scripts/compose-k3s-sync.sh" \
               --project-dir "$DEPLOY_PATH"
