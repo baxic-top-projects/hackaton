@@ -425,8 +425,9 @@ for row in "${sync_services[@]}"; do
     pull_policy=IfNotPresent
     log "using registry digest $deployment_image for multi-platform image"
   else
-    if "${k3s_ctr[@]}" -n k8s.io images ls -q "name==docker.io/${immutable_image}" |
-        grep -q .; then
+    existing_ref=$("${k3s_ctr[@]}" -n k8s.io images ls -q \
+      "name==docker.io/${immutable_image}" 2>/dev/null || true)
+    if [[ -n "$existing_ref" ]]; then
       log "$immutable_image already present in k3s containerd; skipping import"
     elif [[ -n "${imported_images[$image_id]:-}" ]]; then
       # Services built from the same image share one import (save/import is slow).
