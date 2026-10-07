@@ -71,5 +71,7 @@ jobs:
           script_stop: true
           command_timeout: 60m
           script: |
+            cd "$DEPLOY_PATH"
             bash "$DEPLOY_PATH/scripts/compose-k3s-sync.sh" \
-              --project-dir "$DEPLOY_PATH"
+              --project-dir "$DEPLOY_PATH" \
+              --env-file .env
