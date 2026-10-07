@@ -90,6 +90,45 @@ print(
   log "schema patches applied for $namespace/$deployment"
 }
 
+docker_build_service() {
+  local service=$1
+  local -a cmd
+  mapfile -d '' -t cmd < <(
+    python3 - "$config_json" "$service" "$image_separator" "$no_cache" <<'PY'
+import json
+import os
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    config = json.load(stream)
+name, separator, no_cache = sys.argv[2], sys.argv[3], sys.argv[4]
+service = config["services"][name]
+build = service["build"]
+if isinstance(build, str):
+    build = {"context": build}
+context = build.get("context", ".")
+image = service.get("image") or f"{config['name']}{separator}{name}"
+cmd = ["docker", "build", "--tag", image]
+if build.get("dockerfile"):
+    cmd += ["--file", os.path.join(context, build["dockerfile"])]
+if build.get("target"):
+    cmd += ["--target", build["target"]]
+args = build.get("args") or {}
+if isinstance(args, list):
+    args = dict(item.split("=", 1) for item in args)
+for key, value in args.items():
+    if value is not None:
+        cmd += ["--build-arg", f"{key}={value}"]
+if no_cache == "true":
+    cmd.append("--no-cache")
+cmd.append(context)
+sys.stdout.write("\0".join(cmd) + "\0")
+PY
+  )
+  ((${#cmd[@]})) || die "cannot derive docker build command for $service"
+  DOCKER_BUILDKIT=1 "${cmd[@]}"
+}
+
 project_dir=
 project_name_override=
 env_file=
@@ -323,14 +362,16 @@ if [[ "$skip_build" != true && "$dry_run" != true ]]; then
     IFS=$'\t' read -r service _ _ _ <<<"$row"
     build_services+=("$service")
   done
-  if ((${#build_services[@]} <= 1)); then
-    "${compose[@]}" build "${build_args[@]}"
-  else
-    for service in "${build_services[@]}"; do
-      log "building service $service"
-      "${compose[@]}" build "${build_args[@]}" "$service"
-    done
-  fi
+  for service in "${build_services[@]}"; do
+    log "building service $service"
+    if ! "${compose[@]}" build "${build_args[@]}" "$service"; then
+      # Compose (bake) can fail after building with "open
+      # /tmp/.tmp-compose-build-metadataFile-...: no such file or directory";
+      # rebuild with plain docker build, which needs no metadata file.
+      log "compose build failed for $service; retrying with docker build"
+      docker_build_service "$service"
+    fi
+  done
 fi
 
 local_ips=" $(hostname -I 2>/dev/null || true) "
