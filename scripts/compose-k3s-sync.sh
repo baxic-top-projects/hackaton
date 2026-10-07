@@ -22,6 +22,7 @@ Options:
 Environment:
   COMPOSE_K3S_EXTRA_NAMESERVERS   Public DNS for Maildev/SMTP Deployments (default: 8.8.8.8,1.1.1.1)
   COMPOSE_K3S_SKIP_SMTP_DNS       Set to 1 to skip Maildev dnsConfig on the Deployment
+  COMPOSE_BAKE                    Passed to docker compose build (default: false)
 EOF
 }
 
@@ -253,7 +254,10 @@ if [[ "$skip_build" != true && "$dry_run" != true ]]; then
   log "building Compose project $project_name"
   build_args=()
   [[ "$no_cache" == true ]] && build_args+=(--no-cache)
-  "${compose[@]}" build "${build_args[@]}"
+  # The bake builder hands buildx a metadata file under $TMPDIR, which goes
+  # missing when buildx sees a different /tmp (e.g. snap Docker), failing the
+  # build after all images were already produced.
+  COMPOSE_BAKE=${COMPOSE_BAKE:-false} "${compose[@]}" build "${build_args[@]}"
 fi
 
 local_ips=" $(hostname -I 2>/dev/null || true) "
