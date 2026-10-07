@@ -25,6 +25,7 @@ Environment:
   COMPOSE_K3S_SKIP_SMTP_DNS       Set to 1 to skip Maildev dnsConfig on the Deployment
   COMPOSE_K3S_STRICT_ROLLOUT      Set to 1 to fail when kubectl rollout status fails
   COMPOSE_BAKE                    Default 0 — avoid compose bake metadata-file races on build
+  BUILDX_NO_DEFAULT_ATTESTATIONS  Default 1 — skip provenance attestation (metadata-file flake)
   TMPDIR                          Default /tmp for compose build temp files
 EOF
 }
@@ -88,45 +89,6 @@ print(
     log "Maildev/SMTP Deployment dnsConfig set for $namespace/$deployment"
   fi
   log "schema patches applied for $namespace/$deployment"
-}
-
-docker_build_service() {
-  local service=$1
-  local -a cmd
-  mapfile -d '' -t cmd < <(
-    python3 - "$config_json" "$service" "$image_separator" "$no_cache" <<'PY'
-import json
-import os
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as stream:
-    config = json.load(stream)
-name, separator, no_cache = sys.argv[2], sys.argv[3], sys.argv[4]
-service = config["services"][name]
-build = service["build"]
-if isinstance(build, str):
-    build = {"context": build}
-context = build.get("context", ".")
-image = service.get("image") or f"{config['name']}{separator}{name}"
-cmd = ["docker", "build", "--tag", image]
-if build.get("dockerfile"):
-    cmd += ["--file", os.path.join(context, build["dockerfile"])]
-if build.get("target"):
-    cmd += ["--target", build["target"]]
-args = build.get("args") or {}
-if isinstance(args, list):
-    args = dict(item.split("=", 1) for item in args)
-for key, value in args.items():
-    if value is not None:
-        cmd += ["--build-arg", f"{key}={value}"]
-if no_cache == "true":
-    cmd.append("--no-cache")
-cmd.append(context)
-sys.stdout.write("\0".join(cmd) + "\0")
-PY
-  )
-  ((${#cmd[@]})) || die "cannot derive docker build command for $service"
-  DOCKER_BUILDKIT=1 "${cmd[@]}"
 }
 
 project_dir=
@@ -350,28 +312,42 @@ if [[ "$dry_run" != true && "$skip_build" != true && "$patch_only" != true ]]; t
   "${compose[@]}" down --remove-orphans
 fi
 
+compose_build_service() {
+  local service=$1
+  local source_image=$2
+  if "${compose[@]}" build "${build_args[@]}" "$service"; then
+    return 0
+  fi
+  if docker image inspect "$source_image" >/dev/null 2>&1; then
+    log "compose build exited non-zero but image exists ($source_image); continuing (metadata-file flake)"
+    return 0
+  fi
+  return 1
+}
+
 if [[ "$skip_build" != true && "$dry_run" != true ]]; then
   log "building Compose project $project_name"
   build_args=()
   [[ "$no_cache" == true ]] && build_args+=(--no-cache)
   export TMPDIR="${TMPDIR:-/tmp}"
   export COMPOSE_BAKE="${COMPOSE_BAKE:-0}"
+  export BUILDX_NO_DEFAULT_ATTESTATIONS="${BUILDX_NO_DEFAULT_ATTESTATIONS:-1}"
   mkdir -p "$TMPDIR"
   build_services=()
   for row in "${sync_services[@]}"; do
     IFS=$'\t' read -r service _ _ _ <<<"$row"
     build_services+=("$service")
   done
-  for service in "${build_services[@]}"; do
-    log "building service $service"
-    if ! "${compose[@]}" build "${build_args[@]}" "$service"; then
-      # Compose (bake) can fail after building with "open
-      # /tmp/.tmp-compose-build-metadataFile-...: no such file or directory";
-      # rebuild with plain docker build, which needs no metadata file.
-      log "compose build failed for $service; retrying with docker build"
-      docker_build_service "$service"
-    fi
-  done
+  if ((${#build_services[@]} <= 1)); then
+    IFS=$'\t' read -r service source_image _ _ <<<"${sync_services[0]}"
+    compose_build_service "$service" "$source_image" || die "compose build failed for $service"
+  else
+    for row in "${sync_services[@]}"; do
+      IFS=$'\t' read -r service source_image _ _ <<<"$row"
+      log "building service $service"
+      compose_build_service "$service" "$source_image" || die "compose build failed for $service"
+    done
+  fi
 fi
 
 local_ips=" $(hostname -I 2>/dev/null || true) "
