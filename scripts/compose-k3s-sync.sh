@@ -104,24 +104,27 @@ fix_maildev_container_command() {
   local workdir
   workdir=$(docker image inspect "$inspect_img" --format '{{.Config.WorkingDir}}')
   [[ -n "$workdir" ]] || workdir=/home/node/app
-  # Compose→k8s often sets command: ["bin/maildev"] without WORKDIR → CrashLoopBackOff.
+  # Compose→k8s: command ["bin/maildev"] without WORKDIR, or args ["-c","exec node …"] vs entrypoint node.
   "${kube[@]}" patch deployment "$deployment" -n "$namespace" --type=json \
     -p='[{"op":"remove","path":"/spec/template/spec/containers/0/command"}]' \
     >/dev/null 2>&1 || true
-  # Patch workingDir on every container (smtp Deployments are single-container).
-  local containers
-  containers=$("${kube[@]}" get deployment "$deployment" -n "$namespace" \
-    -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}')
-  while IFS= read -r cname; do
-    [[ -n "$cname" ]] || continue
-    local one
-    one=$(WD="$workdir" CN="$cname" python3 -c '
-import json, os
-print(json.dumps({"spec": {"template": {"spec": {"containers": [{"name": os.environ["CN"], "workingDir": os.environ["WD"]}]}}}}))
+  local merge_patch
+  merge_patch=$("${kube[@]}" get deployment "$deployment" -n "$namespace" -o json | WD="$workdir" python3 -c '
+import json, os, sys
+deploy = json.load(sys.stdin)
+wd = os.environ["WD"]
+out = []
+for c in deploy["spec"]["template"]["spec"]["containers"]:
+    entry = {"name": c["name"], "workingDir": wd}
+    args = c.get("args") or []
+    if len(args) >= 2 and args[0] == "-c" and "maildev" in str(args[1]):
+        entry["command"] = ["/bin/sh", "-c"]
+        entry["args"] = [args[1]]
+    out.append(entry)
+print(json.dumps({"spec": {"template": {"spec": {"containers": out}}}}))
 ')
-    "${kube[@]}" patch deployment "$deployment" -n "$namespace" --type merge \
-      -p "$one" >/dev/null 2>&1 || true
-  done <<<"$containers"
+  "${kube[@]}" patch deployment "$deployment" -n "$namespace" --type merge \
+    -p "$merge_patch" >/dev/null 2>&1 || true
   log "Maildev command/workdir fix for $namespace/$deployment (workdir=$workdir)"
 }
 
@@ -382,45 +385,6 @@ compose_image_exists() {
   return 1
 }
 
-ctr_image_exists() {
-  "${k3s_ctr[@]}" -n k8s.io images ls -q 2>/dev/null | grep -Fxq "$1"
-}
-
-# Drop stale compose-sync copies of a service image (Docker tags and containerd
-# refs) except the ones still needed, so repeated deploys do not fill the disk.
-prune_stale_sync_images() {
-  local repo=$1
-  shift
-  local keep=" $* "
-  local ref
-  while IFS= read -r ref; do
-    [[ -n "$ref" && "$keep" != *" $ref "* ]] || continue
-    docker image rm "$ref" >/dev/null 2>&1 || true
-  done < <(docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}' 2>/dev/null || true)
-  while IFS= read -r ref; do
-    [[ -n "$ref" && "$keep" != *" $ref "* && "$keep" != *" docker.io/$ref "* ]] || continue
-    "${k3s_ctr[@]}" -n k8s.io images rm "$ref" >/dev/null 2>&1 || true
-  done < <(
-    "${k3s_ctr[@]}" -n k8s.io images ls -q 2>/dev/null |
-      grep -E "^(docker\.io/)?${repo//./\\.}:" || true
-  )
-}
-
-free_docker_space() {
-  local aggressive=${1:-false}
-  docker image prune -f >/dev/null 2>&1 || true
-  if [[ "$aggressive" == true ]]; then
-    docker builder prune -af >/dev/null 2>&1 || true
-  else
-    docker builder prune -f >/dev/null 2>&1 || true
-  fi
-}
-
-import_into_k3s() {
-  local image=$1
-  docker image save "$image" | "${k3s_ctr[@]}" -n k8s.io images import -
-}
-
 compose_build_service() {
   local service=$1
   local source_image=$2
@@ -538,22 +502,9 @@ for row in "${sync_services[@]}"; do
     pull_policy=IfNotPresent
     log "using registry digest $deployment_image for multi-platform image"
   else
-    current_image=$("${kube[@]}" get deployment "$deployment" -n "$namespace" \
-      -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
-    prune_stale_sync_images "compose-sync/${kube_project}-${service}" \
-      "$immutable_image" "$current_image"
-    free_docker_space
-    if ctr_image_exists "$immutable_image" || ctr_image_exists "docker.io/$immutable_image"; then
-      log "k3s already has $immutable_image; skipping import"
-    else
-      log "importing $source_image as $immutable_image"
-      docker image tag "$source_image" "$immutable_image"
-      if ! import_into_k3s "$immutable_image"; then
-        log "import failed; pruning Docker build cache and retrying"
-        free_docker_space true
-        import_into_k3s "$immutable_image" || die "k3s image import failed for $immutable_image"
-      fi
-    fi
+    log "importing $source_image as $immutable_image"
+    docker image tag "$source_image" "$immutable_image"
+    docker image save "$immutable_image" | "${k3s_ctr[@]}" -n k8s.io images import -
   fi
 
   container=$("${kube[@]}" get deployment "$deployment" -n "$namespace" \
