@@ -24,7 +24,8 @@ Environment:
   COMPOSE_K3S_EXTRA_NAMESERVERS   Public DNS for Maildev/SMTP Deployments (default: 8.8.8.8,1.1.1.1)
   COMPOSE_K3S_SKIP_SMTP_DNS       Set to 1 to skip Maildev dnsConfig on the Deployment
   COMPOSE_K3S_STRICT_ROLLOUT      Set to 1 to fail when kubectl rollout status fails
-  TMPDIR                          Set to <project>/.tmp-compose-build during builds
+  COMPOSE_BAKE                    Default 0 — avoid compose bake metadata-file races on build
+  TMPDIR                          Default /tmp for compose build temp files
 EOF
 }
 
@@ -312,55 +313,24 @@ fi
 
 if [[ "$skip_build" != true && "$dry_run" != true ]]; then
   log "building Compose project $project_name"
-  # docker compose build hands buildx a metadata file under $TMPDIR, which
-  # goes missing when buildx sees a different /tmp (e.g. snap Docker), failing
-  # the deploy after all images were produced. Build each image with plain
-  # `docker build` instead, which needs no metadata file.
-  build_tmp="$project_dir/.tmp-compose-build"
-  mkdir -p "$build_tmp"
-  TMPDIR="$build_tmp" python3 - "$config_json" "$image_separator" "$no_cache" <<'PY'
-import json
-import os
-import subprocess
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as stream:
-    config = json.load(stream)
-project = config["name"]
-separator = sys.argv[2]
-no_cache = sys.argv[3] == "true"
-
-for name, service in config["services"].items():
-    build = service.get("build")
-    if not build:
-        continue
-    if isinstance(build, str):
-        build = {"context": build}
-    context = build.get("context", ".")
-    image = service.get("image") or f"{project}{separator}{name}"
-    command = ["docker", "build", "-t", image]
-    dockerfile = build.get("dockerfile")
-    if dockerfile:
-        if not os.path.isabs(dockerfile):
-            dockerfile = os.path.join(context, dockerfile)
-        command += ["-f", dockerfile]
-    args = build.get("args") or {}
-    if isinstance(args, list):
-        args = dict(item.split("=", 1) for item in args if "=" in item)
-    for key, value in args.items():
-        if value is not None:
-            command += ["--build-arg", f"{key}={value}"]
-    if build.get("target"):
-        command += ["--target", build["target"]]
-    if build.get("network"):
-        command += ["--network", build["network"]]
-    if no_cache:
-        command.append("--no-cache")
-    command.append(context)
-    print(f"[compose-k3s-sync] building service {name} as {image}", flush=True)
-    subprocess.run(command, check=True)
-PY
-  rm -rf "$build_tmp"
+  build_args=()
+  [[ "$no_cache" == true ]] && build_args+=(--no-cache)
+  export TMPDIR="${TMPDIR:-/tmp}"
+  export COMPOSE_BAKE="${COMPOSE_BAKE:-0}"
+  mkdir -p "$TMPDIR"
+  build_services=()
+  for row in "${sync_services[@]}"; do
+    IFS=$'\t' read -r service _ _ _ <<<"$row"
+    build_services+=("$service")
+  done
+  if ((${#build_services[@]} <= 1)); then
+    "${compose[@]}" build "${build_args[@]}"
+  else
+    for service in "${build_services[@]}"; do
+      log "building service $service"
+      "${compose[@]}" build "${build_args[@]}" "$service"
+    done
+  fi
 fi
 
 local_ips=" $(hostname -I 2>/dev/null || true) "
