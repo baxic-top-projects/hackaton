@@ -312,14 +312,31 @@ if [[ "$dry_run" != true && "$skip_build" != true && "$patch_only" != true ]]; t
   "${compose[@]}" down --remove-orphans
 fi
 
+compose_image_exists() {
+  local service=$1
+  local source_image=$2
+  local candidate
+  for candidate in \
+    "$source_image" \
+    "${project_name}${image_separator}${service}" \
+    "${project_name}-${service}"; do
+    if docker image inspect "$candidate" >/dev/null 2>&1; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 compose_build_service() {
   local service=$1
   local source_image=$2
+  local found
   if "${compose[@]}" build "${build_args[@]}" "$service"; then
     return 0
   fi
-  if docker image inspect "$source_image" >/dev/null 2>&1; then
-    log "compose build exited non-zero but image exists ($source_image); continuing (metadata-file flake)"
+  if found=$(compose_image_exists "$service" "$source_image"); then
+    log "compose build exited non-zero but image exists ($found); continuing (metadata-file flake)"
     return 0
   fi
   return 1
@@ -338,23 +355,17 @@ if [[ "$skip_build" != true && "$dry_run" != true ]]; then
     IFS=$'\t' read -r service _ _ _ <<<"$row"
     build_services+=("$service")
   done
-  if ((${#build_services[@]} <= 1)); then
-    IFS=$'\t' read -r service source_image _ _ <<<"${sync_services[0]}"
+  for row in "${sync_services[@]}"; do
+    IFS=$'\t' read -r service source_image _ _ <<<"$row"
+    log "building service $service"
     compose_build_service "$service" "$source_image" || die "compose build failed for $service"
-  else
-    for row in "${sync_services[@]}"; do
-      IFS=$'\t' read -r service source_image _ _ <<<"$row"
-      log "building service $service"
-      compose_build_service "$service" "$source_image" || die "compose build failed for $service"
-    done
-  fi
+  done
 fi
 
 local_ips=" $(hostname -I 2>/dev/null || true) "
 matched_services=0
 rolled_out=0
 schema_patched=0
-declare -A imported_images=()
 
 for row in "${sync_services[@]}"; do
   IFS=$'\t' read -r service source_image replicas explicit_image <<<"$row"
@@ -425,21 +436,9 @@ for row in "${sync_services[@]}"; do
     pull_policy=IfNotPresent
     log "using registry digest $deployment_image for multi-platform image"
   else
-    existing_ref=$("${k3s_ctr[@]}" -n k8s.io images ls -q \
-      "name==docker.io/${immutable_image}" 2>/dev/null || true)
-    if [[ -n "$existing_ref" ]]; then
-      log "$immutable_image already present in k3s containerd; skipping import"
-    elif [[ -n "${imported_images[$image_id]:-}" ]]; then
-      # Services built from the same image share one import (save/import is slow).
-      log "tagging ${imported_images[$image_id]} as $immutable_image (same image)"
-      "${k3s_ctr[@]}" -n k8s.io images tag --force \
-        "docker.io/${imported_images[$image_id]}" "docker.io/${immutable_image}" >/dev/null
-    else
-      log "importing $source_image as $immutable_image"
-      docker image tag "$source_image" "$immutable_image"
-      docker image save "$immutable_image" | "${k3s_ctr[@]}" -n k8s.io images import -
-    fi
-    imported_images[$image_id]=$immutable_image
+    log "importing $source_image as $immutable_image"
+    docker image tag "$source_image" "$immutable_image"
+    docker image save "$immutable_image" | "${k3s_ctr[@]}" -n k8s.io images import -
   fi
 
   container=$("${kube[@]}" get deployment "$deployment" -n "$namespace" \
