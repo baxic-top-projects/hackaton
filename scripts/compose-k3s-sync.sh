@@ -316,8 +316,13 @@ if [[ "$skip_build" != true && "$dry_run" != true ]]; then
   [[ "$no_cache" == true ]] && build_args+=(--no-cache)
   # The bake builder hands buildx a metadata file under $TMPDIR, which goes
   # missing when buildx sees a different /tmp (e.g. snap Docker), failing the
-  # build after all images were already produced.
-  COMPOSE_BAKE=${COMPOSE_BAKE:-false} "${compose[@]}" build "${build_args[@]}"
+  # build after all images were already produced. Some Compose versions ignore
+  # COMPOSE_BAKE, so also point TMPDIR at a project-local directory that both
+  # compose and buildx can see.
+  build_tmp="$project_dir/.tmp-compose-build"
+  mkdir -p "$build_tmp"
+  COMPOSE_BAKE=${COMPOSE_BAKE:-false} TMPDIR="$build_tmp" "${compose[@]}" build "${build_args[@]}"
+  rm -rf "$build_tmp"
 fi
 
 local_ips=" $(hostname -I 2>/dev/null || true) "

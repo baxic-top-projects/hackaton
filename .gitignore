@@ -10,3 +10,4 @@ data/feedback.json
 data/novelty_cache.json
 data/graph_store/
 /data/case_yandex
+.tmp-compose-build/

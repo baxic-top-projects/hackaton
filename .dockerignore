@@ -8,3 +8,7 @@ __pycache__
 *.pyc
 .streamlit/secrets.toml
 data/case_yandex
+.tmp-compose-build
+data/graph_store
+data/feedback.json
+data/novelty_cache.json
